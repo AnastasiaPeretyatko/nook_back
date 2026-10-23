@@ -1,0 +1,15 @@
+node_modules
+dist
+coverage
+.git
+.env
+.env.*
+!.env.example
+docs
+test
+.agents
+.claude
+skills-lock.json
+*.md
+Dockerfile
+.dockerignore
