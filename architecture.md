@@ -38,7 +38,8 @@
 - [src/common/all-exceptions.filter.ts](src/common/all-exceptions.filter.ts) — глобальный фильтр (`APP_FILTER` в `AppModule`). Любая ошибка уходит клиенту как `{ "code": "...", "message": "..." }`, больше никаких полей.
 - Свой код выбирается так: `throw new ConflictException({ code: 'email_taken', message: '...' })`. Без кода берётся стандартный по статусу (`not_found`, `forbidden`, `too_many_requests`, …). Список сообщений от `ValidationPipe` склеивается в одну строку с кодом `validation_failed`.
 - Неожиданная ошибка (не `HttpException`) → `500 internal_error`, текст скрыт, стек пишется в лог.
-- Сам `ValidationPipe` ещё не подключён — это сделаем в B1 вместе с первыми DTO (описаниями тел запросов).
+- Проверка входных данных — [src/common/validation.pipe.ts](src/common/validation.pipe.ts), подключена глобально (`APP_PIPE` в `AppModule`): `transform` (тела становятся DTO-классами, числа из адреса — числами), `whitelist` (поля без правила **молча отбрасываются**, не отклоняются), одно сообщение на поле.
+- Код ошибки правилу задаёт `withCode`: `@IsEmail({}, withCode('invalid_email', 'Invalid email'))`. Ответ — `400 {code, message}`; кодом становится код первого упавшего поля (в порядке полей DTO), без кода — `validation_failed`; сообщения всех упавших полей склеены через `; `. Правила пишем только в DTO-классах, не в сервисах.
 
 ### Самопинг и остановка (B0.7)
 
@@ -61,6 +62,29 @@
 - **Защита от Neon (два слоя):** (1) [test/support/env.ts](test/support/env.ts) выполняется jest-ом до любых импортов и подставляет `DATABASE_URL` тестовой базы — иначе `ConfigModule` при импорте прочитал бы боевой `.env`; (2) `createTestApp()` проверяет, к какой базе приложение реально подключилось, и отказывается работать, если хост не локальный. Тот же запрет в `global-setup.ts`.
 - Адрес тестовой базы можно сменить переменной `TEST_DATABASE_URL`, но только на локальный хост.
 - Правило линтера «небезопасный any» для `test/` смягчено: результаты сырого SQL не типизированы.
+
+### Таблицы входа (B1.4)
+
+Миграция [CreateAuthTables](src/migrations/1792767790080-CreateAuthTables.ts); классы в коде только описывают таблицы (сами ограничения и триггер — в SQL миграции).
+
+| Таблица | Сущность | Главное |
+|---|---|---|
+| `users` | [User](src/users/user.entity.ts) | `id` (uuid, создаёт база), `email` (уникален, **только нижний регистр** — проверяет база), `password_hash` и `google_sub` (оба могут быть пустыми, но не одновременно; `google_sub` уникален), `created_at` |
+| `refresh_tokens` | [RefreshToken](src/auth/refresh-token.entity.ts) | PK — `token_hash` (SHA-256, сам токен не хранится), `user_id` (удаляется вместе с пользователем), `expires_at`. **Одноразовый:** при обновлении строка удаляется и вставляется следующая; повторное использование = строки нет = отказ |
+| `profiles` | [Profile](src/users/profile.entity.ts) | PK `user_id` (удаляется вместе с пользователем), `display_name` ≤ 100, `avatar_url` ≤ 2048, `updated_at` (триггер `set_updated_at`, приложение его не пишет). Строка появляется, когда нужна |
+
+- Модули: [UsersModule](src/users/users.module.ts) (User, Profile) и [AuthModule](src/auth/auth.module.ts) (RefreshToken) пока только регистрируют сущности; логика — в следующих задачах B1.
+- Параметры подключения: `uuidExtension: 'pgcrypto'` (чтобы TypeORM понимал `gen_random_uuid()`) и `installExtensions: false` (расширения не ставим — функция встроена в Postgres).
+- Тест [test/schema.e2e-spec.ts](test/schema.e2e-spec.ts) сверяет сущности с настоящей схемой (`createSchemaBuilder().log()` должен ничего не предлагать менять) и проверяет каждое ограничение. **Меняешь сущность — меняй и миграцию, иначе этот тест упадёт.** Ограничения и внешние ключи в сущностях названы так же, как в SQL — это нужно для сверки.
+
+### Пароли и токены (B1.6)
+
+Живут в [AuthModule](src/auth/auth.module.ts), наружу экспортируются `PasswordService` и `TokenService`. Маршрутов пока нет — их строит B1.7.
+
+- [PasswordService](src/auth/password.service.ts): `hash(password)` — argon2id (19 МиБ, 2 прохода, 1 поток); `verify(hash, password)` — `true/false`. Если хеша нет (почта не найдена, аккаунт только из Google), всё равно выполняется полная проверка argon2 против заготовленного хеша и ответ всегда `false`: по времени ответа нельзя узнать, есть ли такая почта. Битый хеш в базе = «не подошёл», не ошибка сервера.
+- [TokenService](src/auth/token.service.ts), access-токен: `signAccessToken(userId)` — JWT (HS256, в нём только `sub`, живёт 1 час, секрет `JWT_SECRET`); `verifyAccessToken(token)` — id пользователя или `null` (плохая подпись, просрочен, чужой алгоритм, `sub` не строка). **В базу не ходит.**
+- Refresh-токен: `issueRefreshToken(userId, manager?)` — случайные 32 байта (base64url), в базе только SHA-256; срок 90 дней по часам базы; заодно удаляет **просроченные токены этого же пользователя** (таймеров нельзя). `rotateRefreshToken(token)` — в одной транзакции удаляет строку (`DELETE … RETURNING`, условие «не просрочен») и выпускает следующий токен; кто удалил строку, тот и выиграл — из пяти одновременных запросов успешен ровно один; нет строки → `401 invalid_refresh_token`; если выпуск нового упал, старый остаётся рабочим. `revokeRefreshToken(token)` — выход; лишние и неизвестные токены не ошибка.
+- Тесты: юнит — [password.service.spec.ts](src/auth/password.service.spec.ts), [token.service.spec.ts](src/auth/token.service.spec.ts); на настоящей базе — [test/refresh-tokens.e2e-spec.ts](test/refresh-tokens.e2e-spec.ts).
 
 ## Куда движемся
 
