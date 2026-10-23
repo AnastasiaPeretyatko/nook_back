@@ -1,0 +1,17 @@
+# Throw-away Postgres for e2e tests only (npm run test:db:up). Data lives in memory.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: nook
+      POSTGRES_PASSWORD: nook
+      POSTGRES_DB: nook_test
+    ports:
+      - '54330:5432'
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U nook -d nook_test']
+      interval: 1s
+      timeout: 3s
+      retries: 30
