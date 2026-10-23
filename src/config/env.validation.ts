@@ -1,12 +1,14 @@
-import { plainToInstance } from 'class-transformer';
+import { plainToInstance, Transform } from 'class-transformer';
 import {
   IsIn,
   IsInt,
   IsOptional,
+  IsString,
   IsUrl,
   Matches,
   Max,
   Min,
+  MinLength,
   validateSync,
 } from 'class-validator';
 
@@ -29,6 +31,25 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsUrl({ require_tld: false, require_protocol: true })
   SELF_PING_URL?: string;
+
+  // Signs access tokens. Anyone who knows it can mint a token for any user.
+  // Generate: node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
+  @MinLength(32, { message: 'JWT_SECRET must be at least 32 characters' })
+  JWT_SECRET: string;
+
+  // OAuth client IDs whose Google ID tokens we accept (the token's `aud`), comma separated.
+  // Not set = Google sign-in rejects every token.
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string'
+      ? value
+          .split(',')
+          .map((id) => id.trim())
+          .filter(Boolean)
+      : value,
+  )
+  @IsString({ each: true })
+  GOOGLE_CLIENT_IDS?: string[];
 }
 
 export function validateEnv(config: Record<string, unknown>) {

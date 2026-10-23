@@ -3,6 +3,7 @@ import { validateEnv } from './env.validation';
 
 const valid = {
   DATABASE_URL: 'postgresql://user:pass@host/db?sslmode=require',
+  JWT_SECRET: 'x'.repeat(32),
 };
 
 describe('validateEnv', () => {
@@ -27,7 +28,10 @@ describe('validateEnv', () => {
   });
 
   it('requires sslmode in DATABASE_URL in production only', () => {
-    const plain = { DATABASE_URL: 'postgresql://u:p@h/d' };
+    const plain = {
+      DATABASE_URL: 'postgresql://u:p@h/d',
+      JWT_SECRET: valid.JWT_SECRET,
+    };
     expect(() => validateEnv({ ...plain, NODE_ENV: 'production' })).toThrow(
       /sslmode/,
     );
@@ -58,5 +62,32 @@ describe('validateEnv', () => {
     expect(() => validateEnv({ ...valid, SELF_PING_URL: 'nope' })).toThrow(
       /SELF_PING_URL/,
     );
+  });
+
+  it('requires JWT_SECRET of at least 32 characters', () => {
+    expect(() => validateEnv({ DATABASE_URL: valid.DATABASE_URL })).toThrow(
+      /JWT_SECRET/,
+    );
+    expect(() => validateEnv({ ...valid, JWT_SECRET: 'x'.repeat(31) })).toThrow(
+      /JWT_SECRET/,
+    );
+    expect(() =>
+      validateEnv({ ...valid, JWT_SECRET: 'x'.repeat(32) }),
+    ).not.toThrow();
+  });
+
+  it('turns GOOGLE_CLIENT_IDS into a trimmed list', () => {
+    const env = validateEnv({
+      ...valid,
+      GOOGLE_CLIENT_IDS: ' a.apps , b.apps,, ',
+    });
+    expect(env.GOOGLE_CLIENT_IDS).toEqual(['a.apps', 'b.apps']);
+  });
+
+  it('leaves GOOGLE_CLIENT_IDS unset when absent, empty list when blank', () => {
+    expect(validateEnv(valid).GOOGLE_CLIENT_IDS).toBeUndefined();
+    expect(
+      validateEnv({ ...valid, GOOGLE_CLIENT_IDS: '' }).GOOGLE_CLIENT_IDS,
+    ).toEqual([]);
   });
 });
