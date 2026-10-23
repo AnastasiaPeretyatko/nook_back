@@ -9,6 +9,9 @@ export function buildDataSourceOptions(url: string): PostgresConnectionOptions {
     url,
     namingStrategy: new SnakeNamingStrategy(),
     synchronize: false,
+    // gen_random_uuid() is built into Postgres 13+; do not try to install an extension for it.
+    uuidExtension: 'pgcrypto',
+    installExtensions: false,
     // Small pool and quick idle close: Neon free sleeps after 5 min without queries.
     poolSize: 5,
     // A sleeping Neon needs seconds to wake on the first connection.

@@ -11,7 +11,18 @@ const query = jest.fn();
 
 @Global()
 @Module({
-  providers: [{ provide: DataSource, useValue: { query } }],
+  providers: [
+    {
+      provide: DataSource,
+      // Just enough for TypeOrmModule.forFeature (repositories) and the health check.
+      useValue: {
+        query,
+        options: { type: 'postgres' },
+        entityMetadatas: [],
+        getRepository: () => ({}),
+      },
+    },
+  ],
   exports: [DataSource],
 })
 class FakeDatabaseModule {}
