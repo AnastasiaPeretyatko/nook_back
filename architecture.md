@@ -6,12 +6,12 @@
 
 Стандартный каркас `nest new`: `AppModule` + `AppController` + `AppService` (hello world), тесты, ESLint, Prettier. Ни БД, ни конфигурации, ни бизнес-кода ещё нет.
 
-Установлено: `@nestjs/common|core|platform-express` 11, `rxjs`, `@nestjs/config` 4, `@nestjs/typeorm` 11, `typeorm`, `pg`, `typeorm-naming-strategies`, `class-validator`, `class-transformer`. Не установлено (понадобится позже): JWT, throttler, `ws`, `firebase-admin` и т.д. — см. этапы в `TASKS.md`. Версии `@nestjs/config` и `@nestjs/typeorm` намеренно **не выше 4 и 11** (см. MEMORY).
+Установлено: `@nestjs/common|core|platform-express` 11, `rxjs`, `@nestjs/config` 4, `@nestjs/typeorm` 11, `typeorm`, `pg`, `typeorm-naming-strategies`, `class-validator`, `class-transformer`. Для входа (B1.2, ещё не подключены в коде): `@nestjs/jwt` 11, `@nestjs/throttler` 6, `argon2` 0.45, `google-auth-library` 11. Не установлено (понадобится позже): `ws`, `firebase-admin` и т.д. — см. этапы в `TASKS.md`. Версии `@nestjs/config`, `@nestjs/typeorm` и `@nestjs/jwt` намеренно **не выше 4, 11 и 11** (см. MEMORY).
 
 ### Конфигурация (B0.2)
 
 - [src/config/env.validation.ts](src/config/env.validation.ts) — класс `EnvironmentVariables` (правила проверки через `class-validator`) и `validateEnv`. `ConfigModule.forRoot({ isGlobal: true, validate: validateEnv })` в `AppModule`: при неверных переменных сервер не стартует и пишет, какая именно не подошла.
-- Переменные: `NODE_ENV` (по умолчанию `development`), `PORT` (3000), `DATABASE_URL` (обязательна, `postgres://`/`postgresql://`), `SELF_PING_URL` (необязательна, `http(s)://…`). Образец — `.env.example`; настоящий `.env` в git не попадает.
+- Переменные: `NODE_ENV` (по умолчанию `development`), `PORT` (3000), `DATABASE_URL` (обязательна, `postgres://`/`postgresql://`), `SELF_PING_URL` (необязательна, `http(s)://…`), `JWT_SECRET` (обязательна, ≥ 32 символов — подпись токенов входа), `GOOGLE_CLIENT_IDS` (необязательна; список через запятую превращается в массив строк; не задана — вход через Google отклоняет любые токены). Образец — `.env.example`; настоящий `.env` в git не попадает.
 - Новую переменную добавлять в `EnvironmentVariables` и в `.env.example`.
 
 ### База данных (B0.3)
@@ -52,6 +52,15 @@
 - [.dockerignore](.dockerignore): не пускает в образ `node_modules`, `.env`, `docs`, `.git`, тесты и т.п.
 - Переменные окружения те же, что в `.env.example`; Render подставляет `PORT` сам. В production `DATABASE_URL` обязана содержать `sslmode`.
 - Локальная проверка образа: `docker build -t nook-back .`, затем `docker run -p 3000:3000 -e DATABASE_URL=… nook-back`. Для базы без TLS (локальный Postgres) добавить `-e NODE_ENV=development`.
+
+### Тесты с настоящей базой (B1.1)
+
+- Тестовая база: Postgres 17 в Docker ([docker-compose.test.yml](docker-compose.test.yml), порт 54330, данные в памяти и пропадают при остановке). Запуск: `npm run test:db:up`, остановка: `npm run test:db:down`. Нужен запущенный Docker.
+- `npm run test:e2e` перед тестами ([test/global-setup.ts](test/global-setup.ts)) применяет все миграции к тестовой базе; тесты идут по одному процессу (`maxWorkers: 1`), потому что база общая.
+- Помощники в [test/support/](test/support/): `createTestApp()` — настоящий `AppModule` на тестовой базе; `truncateAll(ds)` — очистить все таблицы, кроме `migrations` (вызывать в `beforeEach`).
+- **Защита от Neon (два слоя):** (1) [test/support/env.ts](test/support/env.ts) выполняется jest-ом до любых импортов и подставляет `DATABASE_URL` тестовой базы — иначе `ConfigModule` при импорте прочитал бы боевой `.env`; (2) `createTestApp()` проверяет, к какой базе приложение реально подключилось, и отказывается работать, если хост не локальный. Тот же запрет в `global-setup.ts`.
+- Адрес тестовой базы можно сменить переменной `TEST_DATABASE_URL`, но только на локальный хост.
+- Правило линтера «небезопасный any» для `test/` смягчено: результаты сырого SQL не типизированы.
 
 ## Куда движемся
 
