@@ -1,14 +1,18 @@
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, Type } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 import { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions';
 import { AppModule } from '../../src/app.module';
 import { assertLocalDatabase } from './test-env';
 
-// The real AppModule on the test database.
-export async function createTestApp(): Promise<INestApplication> {
+// The real AppModule on the test database. `controllers` adds test-only routes that still
+// pass through the app's global guard, pipe and filter.
+export async function createTestApp(
+  controllers: Type[] = [],
+): Promise<INestApplication> {
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule],
+    controllers,
   }).compile();
   // Check the connection the app really has, not just the URL we meant to give it.
   const { url } = moduleRef.get(DataSource)
