@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
-import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, QueryFailedError, Repository } from 'typeorm';
+import { Profile } from './profile.entity';
 
 // What the API calls `user`.
 export interface PublicUser {
@@ -10,36 +11,82 @@ export interface PublicUser {
   avatarUrl: string | null;
 }
 
+interface UserRow {
+  id: string;
+  email: string;
+  password_hash: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+}
+
+const toUser = (row: UserRow) => ({
+  id: row.id,
+  email: row.email,
+  passwordHash: row.password_hash,
+  displayName: row.display_name ?? null,
+  avatarUrl: row.avatar_url ?? null,
+});
+
 @Injectable()
 export class UsersService {
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    @InjectRepository(Profile) private readonly profiles: Repository<Profile>,
+  ) {}
 
-  // One query: the account with its profile, which may not exist yet.
-  async findByEmail(
-    email: string,
-  ): Promise<(PublicUser & { passwordHash: string | null }) | null> {
-    const [row] = await this.dataSource.query<
-      {
-        id: string;
-        email: string;
-        password_hash: string | null;
-        display_name: string | null;
-        avatar_url: string | null;
-      }[]
-    >(
+  // The account with its profile (which may not exist yet), in one query.
+  // `passwordHash` is for the login check only and must never reach a response.
+  private async findWith(column: 'email' | 'id', value: string) {
+    const [row] = await this.dataSource.query<UserRow[]>(
       `select u.id, u.email, u.password_hash, p.display_name, p.avatar_url
        from users u left join profiles p on p.user_id = u.id
-       where u.email = $1`,
-      [email],
+       where u.${column} = $1`,
+      [value],
     );
-    return row
-      ? {
-          id: row.id,
-          email: row.email,
-          passwordHash: row.password_hash,
-          displayName: row.display_name ?? null,
-          avatarUrl: row.avatar_url ?? null,
-        }
-      : null;
+    return row ? toUser(row) : null;
+  }
+
+  findByEmail(email: string) {
+    return this.findWith('email', email);
+  }
+
+  // The public view of an account. A valid token whose account is gone is simply unauthorized.
+  async getById(id: string): Promise<PublicUser> {
+    const found = await this.findWith('id', id);
+    if (!found) throw this.noSuchUser();
+    return {
+      id: found.id,
+      email: found.email,
+      displayName: found.displayName,
+      avatarUrl: found.avatarUrl,
+    };
+  }
+
+  // Creates the profile row on first use. One statement, so two quick saves cannot clash.
+  async updateProfile(
+    userId: string,
+    profile: { displayName: string | null; avatarUrl: string | null },
+  ): Promise<PublicUser> {
+    try {
+      await this.profiles.upsert({ userId, ...profile }, ['userId']);
+    } catch (error) {
+      // A valid token of an account that no longer exists.
+      if (
+        error instanceof QueryFailedError &&
+        (error.driverError as { constraint?: string }).constraint ===
+          'profiles_user_id_fkey'
+      ) {
+        throw this.noSuchUser();
+      }
+      throw error;
+    }
+    return this.getById(userId);
+  }
+
+  private noSuchUser() {
+    return new UnauthorizedException({
+      code: 'unauthorized',
+      message: 'Missing or invalid access token',
+    });
   }
 }
