@@ -1,14 +1,17 @@
 import { INestApplication, Type } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 import { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions';
 import { AppModule } from '../../src/app.module';
+import { configureProxy } from '../../src/app.setup';
 import { assertLocalDatabase } from './test-env';
 
 // The real AppModule on the test database. `controllers` adds test-only routes that still
 // pass through the app's global guard, pipe and filter.
 export async function createTestApp(
   controllers: Type[] = [],
+  trustProxyHops = 0,
 ): Promise<INestApplication> {
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule],
@@ -23,7 +26,8 @@ export async function createTestApp(
     await moduleRef.close();
     throw error;
   }
-  const app = moduleRef.createNestApplication();
+  const app = moduleRef.createNestApplication<NestExpressApplication>();
+  configureProxy(app, trustProxyHops);
   app.useLogger(false);
   await app.init();
   return app;

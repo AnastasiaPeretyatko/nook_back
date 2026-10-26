@@ -50,6 +50,18 @@ export class EnvironmentVariables {
   )
   @IsString({ each: true })
   GOOGLE_CLIENT_IDS?: string[];
+
+  // How many reverse proxies stand between the internet and this server (Render: set after
+  // checking, see MEMORY). Request limits are counted per client address, and the address
+  // is only read from X-Forwarded-For when this is above 0. Too high lets a client forge it.
+  @IsInt()
+  @Min(0)
+  @Max(5)
+  TRUST_PROXY_HOPS: number = 0;
+
+  // Tests turn the limiter off; it can never be off in production.
+  @IsIn(['on', 'off'])
+  RATE_LIMIT: string = 'on';
 }
 
 export function validateEnv(config: Record<string, unknown>) {
@@ -70,6 +82,11 @@ export function validateEnv(config: Record<string, unknown>) {
   ) {
     throw new Error(
       'Invalid environment variables:\n  DATABASE_URL must contain sslmode=require in production',
+    );
+  }
+  if (env.NODE_ENV === 'production' && env.RATE_LIMIT === 'off') {
+    throw new Error(
+      'Invalid environment variables:\n  RATE_LIMIT=off is not allowed in production',
     );
   }
   return env;

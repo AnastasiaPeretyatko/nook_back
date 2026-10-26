@@ -4,9 +4,12 @@ import {
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { DataSource } from 'typeorm';
 import { Public } from '../auth/public.decorator';
 
+// Render's health checks and our own ping come from one address, often.
+@SkipThrottle({ burst: true, sustained: true }) // by name: a bare @SkipThrottle() only skips "default"
 @Public()
 @Controller('health')
 export class HealthController {

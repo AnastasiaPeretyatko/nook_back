@@ -90,4 +90,27 @@ describe('validateEnv', () => {
       validateEnv({ ...valid, GOOGLE_CLIENT_IDS: '' }).GOOGLE_CLIENT_IDS,
     ).toEqual([]);
   });
+
+  it('trusts no proxy by default and accepts 0 to 5 hops', () => {
+    expect(validateEnv(valid).TRUST_PROXY_HOPS).toBe(0);
+    expect(
+      validateEnv({ ...valid, TRUST_PROXY_HOPS: '1' }).TRUST_PROXY_HOPS,
+    ).toBe(1);
+    for (const hops of ['-1', '6', 'x', '1.5']) {
+      expect(() => validateEnv({ ...valid, TRUST_PROXY_HOPS: hops })).toThrow(
+        /TRUST_PROXY_HOPS/,
+      );
+    }
+  });
+
+  it('keeps the rate limiter on by default and refuses it off in production', () => {
+    expect(validateEnv(valid).RATE_LIMIT).toBe('on');
+    expect(validateEnv({ ...valid, RATE_LIMIT: 'off' }).RATE_LIMIT).toBe('off');
+    expect(() => validateEnv({ ...valid, RATE_LIMIT: 'maybe' })).toThrow(
+      /RATE_LIMIT/,
+    );
+    expect(() =>
+      validateEnv({ ...valid, NODE_ENV: 'production', RATE_LIMIT: 'off' }),
+    ).toThrow(/RATE_LIMIT=off/);
+  });
 });

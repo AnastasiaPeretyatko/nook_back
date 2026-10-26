@@ -1,9 +1,15 @@
 import { Body, Controller, HttpCode, Post } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { Public } from './public.decorator';
 import { LoginDto, RegisterDto } from './dto/credentials.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 
+// Strict: these routes are where passwords get guessed. Counted per route and per address.
+@Throttle({
+  burst: { ttl: 60_000, limit: 10 },
+  sustained: { ttl: 3_600_000, limit: 60 },
+})
 @Public()
 @Controller('auth')
 export class AuthController {

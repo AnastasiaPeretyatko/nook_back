@@ -8,3 +8,5 @@ process.env.DATABASE_URL = TEST_DATABASE_URL;
 delete process.env.SELF_PING_URL;
 process.env.JWT_SECRET = 'test-secret-test-secret-test-secret-0123456789';
 delete process.env.GOOGLE_CLIENT_IDS;
+// The request limiter would block the many quick calls tests make; its own test turns it on.
+process.env.RATE_LIMIT = 'off';
