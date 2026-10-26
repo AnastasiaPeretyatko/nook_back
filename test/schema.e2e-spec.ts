@@ -118,12 +118,17 @@ describe('Auth tables', () => {
     it('moves updated_at forward on every update', async () => {
       const id = await addUser('a@example.com');
       await ds.query(`insert into profiles (user_id) values ($1)`, [id]);
-      const [before] = await ds.query(`select updated_at from profiles`);
-      await ds.query(`update profiles set display_name = 'Ann'`);
-      const [after] = await ds.query(`select updated_at from profiles`);
-      expect(after.updated_at.getTime()).toBeGreaterThan(
-        before.updated_at.getTime(),
+      // Kept as text and compared inside Postgres: a JS Date only has milliseconds,
+      // and two writes can land in the same one.
+      const [{ before }] = await ds.query(
+        `select updated_at::text as before from profiles`,
       );
+      await ds.query(`update profiles set display_name = 'Ann'`);
+      const [{ moved }] = await ds.query(
+        `select updated_at > $1::timestamptz as moved from profiles`,
+        [before],
+      );
+      expect(moved).toBe(true);
     });
 
     it('limits the name to 100 and the avatar address to 2048 characters', async () => {
