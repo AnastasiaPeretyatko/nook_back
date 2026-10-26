@@ -86,6 +86,31 @@
 - Refresh-токен: `issueRefreshToken(userId, manager?)` — случайные 32 байта (base64url), в базе только SHA-256; срок 90 дней по часам базы; заодно удаляет **просроченные токены этого же пользователя** (таймеров нельзя). `rotateRefreshToken(token)` — в одной транзакции удаляет строку (`DELETE … RETURNING`, условие «не просрочен») и выпускает следующий токен; кто удалил строку, тот и выиграл — из пяти одновременных запросов успешен ровно один; нет строки → `401 invalid_refresh_token`; если выпуск нового упал, старый остаётся рабочим. `revokeRefreshToken(token)` — выход; лишние и неизвестные токены не ошибка.
 - Тесты: юнит — [password.service.spec.ts](src/auth/password.service.spec.ts), [token.service.spec.ts](src/auth/token.service.spec.ts); на настоящей базе — [test/refresh-tokens.e2e-spec.ts](test/refresh-tokens.e2e-spec.ts).
 
+### Маршруты входа (B1.7)
+
+[AuthController](src/auth/auth.controller.ts) → [AuthService](src/auth/auth.service.ts). Тела описаны в [src/auth/dto/](src/auth/dto/). Контроллер помечен `@Public()` (см. «Защита маршрутов» ниже).
+
+| Маршрут | Тело | Успех | Ошибки |
+|---|---|---|---|
+| `POST /auth/register` | `{email, password}` | `201 {accessToken, refreshToken, user}` | `400 invalid_email`, `400 weak_password` (8–128 символов), `409 email_taken` |
+| `POST /auth/login` | `{email, password}` | `200 {accessToken, refreshToken, user}` | `401 invalid_credentials` (неверный пароль, неизвестная почта и аккаунт только из Google — один и тот же ответ), `400 validation_failed` для кривого тела |
+| `POST /auth/refresh` | `{refreshToken}` | `200 {accessToken, refreshToken}` (без `user`) | `401 invalid_refresh_token` |
+| `POST /auth/logout` | `{refreshToken}` | `204` без тела (повтор и чужой токен — тоже `204`) | — |
+
+- `user` = `{id, email, displayName, avatarUrl}`; имя и аватар — `null`, пока не заданы. Читает их [UsersService](src/users/users.service.ts) одним запросом с `left join profiles`.
+- Почта обрезается по краям и приводится к нижнему регистру в DTO. Регистрация полагается на уникальный индекс `users_email_key` (а не на предварительную проверку), поэтому два одновременных запроса с одной почтой дают ровно один `201` и один `409`. Вход не проверяет «красоту» почты и пароля — любая неудача это `invalid_credentials`.
+- Каждый вход открывает **новую** сессию (новый refresh-токен), старые не трогает; выход закрывает только ту сессию, чей токен прислан.
+- Тесты: [test/auth.e2e-spec.ts](test/auth.e2e-spec.ts) (20 штук, настоящий `AppModule` и база).
+
+### Защита маршрутов (B1.8)
+
+- [AuthGuard](src/auth/auth.guard.ts) подключён **глобально** (`APP_GUARD` в `AppModule`): **закрыто всё, что не помечено** [`@Public()`](src/auth/public.decorator.ts). Открыты только `AuthController` и `HealthController` целиком. Новый контроллер по умолчанию требует токен.
+- Токен берётся из `Authorization: Bearer <accessToken>` (слово `Bearer` в любом регистре, ровно один токен). Любая неудача — пустой заголовок, чужая схема, битая подпись, просрочка, refresh-токен вместо access — даёт один и тот же ответ `401 {code:"unauthorized"}`; приложение по нему обновляет токен или просит войти.
+- В обработчике id пользователя берётся так: `@CurrentUserId() userId: string` ([auth.guard.ts](src/auth/auth.guard.ts)). Он всегда из проверенного токена; тело, адрес и заголовки клиента на него не влияют. **Нигде больше `user_id` не брать.**
+- Проверка токена — по подписи, **без обращения к базе** (так Neon не просыпается на каждый запрос). Следствие: токен удалённого аккаунта работает до часа. Это зафиксировано отдельным тестом, чтобы изменить его можно было только осознанно.
+- Несуществующий маршрут отвечает `404` (охранник до него не доходит).
+- Тесты: [auth.guard.spec.ts](src/auth/auth.guard.spec.ts) (разбор заголовка), [test/access-guard.e2e-spec.ts](test/access-guard.e2e-spec.ts) (настоящее приложение + тестовый контроллер `ProbeController`, который добавляется через `createTestApp([ProbeController])`). Там же тест-«сторож»: список публичных контроллеров зашит в тест; сделать ещё что-то открытым можно, только поменяв этот список.
+
 ## Куда движемся
 
 Схема из плана (раздел 7–8); имена модулей — предложение, уточним на старте каждого этапа.
