@@ -36,7 +36,7 @@ export class UsersService {
 
   // The account with its profile (which may not exist yet), in one query.
   // `passwordHash` is for the login check only and must never reach a response.
-  private async findWith(column: 'email' | 'id', value: string) {
+  private async findWith(column: 'email' | 'id' | 'google_sub', value: string) {
     const [row] = await this.dataSource.query<UserRow[]>(
       `select u.id, u.email, u.password_hash, p.display_name, p.avatar_url
        from users u left join profiles p on p.user_id = u.id
@@ -50,10 +50,19 @@ export class UsersService {
     return this.findWith('email', email);
   }
 
+  async findByGoogleSub(sub: string): Promise<PublicUser | null> {
+    const found = await this.findWith('google_sub', sub);
+    return found && this.toPublic(found);
+  }
+
   // The public view of an account. A valid token whose account is gone is simply unauthorized.
   async getById(id: string): Promise<PublicUser> {
     const found = await this.findWith('id', id);
     if (!found) throw this.noSuchUser();
+    return this.toPublic(found);
+  }
+
+  private toPublic(found: PublicUser): PublicUser {
     return {
       id: found.id,
       email: found.email,

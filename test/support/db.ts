@@ -1,6 +1,6 @@
 import { INestApplication, Type } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { Test } from '@nestjs/testing';
+import { Test, TestingModuleBuilder } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 import { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions';
 import { AppModule } from '../../src/app.module';
@@ -12,11 +12,11 @@ import { assertLocalDatabase } from './test-env';
 export async function createTestApp(
   controllers: Type[] = [],
   trustProxyHops = 0,
+  configure: (builder: TestingModuleBuilder) => TestingModuleBuilder = (b) => b,
 ): Promise<INestApplication> {
-  const moduleRef = await Test.createTestingModule({
-    imports: [AppModule],
-    controllers,
-  }).compile();
+  const moduleRef = await configure(
+    Test.createTestingModule({ imports: [AppModule], controllers }),
+  ).compile();
   // Check the connection the app really has, not just the URL we meant to give it.
   const { url } = moduleRef.get(DataSource)
     .options as PostgresConnectionOptions;
