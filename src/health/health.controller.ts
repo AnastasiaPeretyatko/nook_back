@@ -1,10 +1,12 @@
 import {
   Controller,
   Get,
+  Req,
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
+import type { Request } from 'express';
 import { DataSource } from 'typeorm';
 import { Public } from '../auth/public.decorator';
 
@@ -21,6 +23,20 @@ export class HealthController {
   @Get()
   alive() {
     return { ok: true };
+  }
+
+  // TEMPORARY (B1.12): shows what this server sees of the caller, to pick TRUST_PROXY_HOPS.
+  // Remove after the value is chosen. Returns only the caller's own connection details.
+  @Get('client')
+  client(@Req() req: Request) {
+    return {
+      ip: req.ip,
+      ips: req.ips,
+      socket: req.socket.remoteAddress,
+      forwardedFor: req.headers['x-forwarded-for'] ?? null,
+      cfConnectingIp: req.headers['cf-connecting-ip'] ?? null,
+      trustProxy: req.app.get('trust proxy') as unknown,
+    };
   }
 
   // Wakes Neon up. For manual checks only, never for pings.
