@@ -4,6 +4,8 @@ import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { EnvironmentVariables } from '../config/env.validation';
 import { UsersModule } from '../users/users.module';
+import { AuthController } from './auth.controller';
+import { AuthService } from './auth.service';
 import { PasswordService } from './password.service';
 import { RefreshToken } from './refresh-token.entity';
 import { TokenService } from './token.service';
@@ -19,7 +21,8 @@ import { TokenService } from './token.service';
       }),
     }),
   ],
-  providers: [PasswordService, TokenService],
+  controllers: [AuthController],
+  providers: [AuthService, PasswordService, TokenService],
   exports: [PasswordService, TokenService],
 })
 export class AuthModule {}
