@@ -42,8 +42,6 @@ export class SyncPushDto {
   @IsArray()
   entries?: unknown[];
 
-  // Not supported yet (cycle, B4). Listed so that it is refused in `rejected` instead of being
-  // dropped without a word: the app would think it was saved.
   @IsOptional()
   @ArrayMaxSize(MAX_ROWS_PER_PUSH, tooMany)
   @IsArray()

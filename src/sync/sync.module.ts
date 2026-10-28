@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CycleWriter } from './cycle-writer';
 import { DeletionWriter } from './deletion-writer';
 import { EntryWriter } from './entry-writer';
 import { LabelWriter } from './label-writer';
@@ -13,6 +14,7 @@ import { TaskWriter } from './task-writer';
   providers: [
     TaskWriter,
     LogWriter,
+    CycleWriter,
     DeletionWriter,
     LabelWriter,
     EntryWriter,

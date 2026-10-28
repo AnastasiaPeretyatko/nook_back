@@ -40,6 +40,21 @@ export interface LogRow {
   clientUpdatedAt: string;
 }
 
+// A day of the cycle calendar. The row's key is the day itself (with the user from the token), so
+// there is no id and no user_id. An empty day (flow 0, nothing marked) is a real row: it is how
+// a taken-back mark reaches the other devices.
+export interface CycleDayRow {
+  date: string;
+  flow: number;
+  mood: number | null;
+  symptoms: number[];
+  discharge: number | null;
+  sex: number | null;
+  pill: boolean;
+  note: string | null;
+  clientUpdatedAt: string;
+}
+
 export interface DeletedRow {
   table: string;
   id: string;
@@ -193,16 +208,27 @@ export const idOf = (raw: unknown, key: string): string | null => {
   return typeof v === 'string' && UUID.test(v) ? v.toLowerCase() : null;
 };
 
+// The day to report back for a refused cycle day: only a real day, never a client string.
+const dayIdOf = (raw: unknown, key: string): string | null => {
+  const v = isObject(raw) ? raw[key] : undefined;
+  try {
+    return day(v);
+  } catch {
+    return null;
+  }
+};
+
 function parse<T>(
   raw: unknown,
   idKey: string,
   build: (fields: Fields) => T,
+  reportId = idOf,
 ): RowResult<T> {
   if (!isObject(raw)) return { id: null };
   try {
     return { row: build(raw) };
   } catch (error) {
-    if (error instanceof InvalidRow) return { id: idOf(raw, idKey) };
+    if (error instanceof InvalidRow) return { id: reportId(raw, idKey) };
     throw error;
   }
 }
@@ -310,6 +336,41 @@ export function parseLog(raw: unknown): RowResult<LogRow> {
       new Date().toISOString(),
     ),
   }));
+}
+
+// Symptoms are indexes 0-8 of the app's list. The app sends them sorted and unique; a repeat
+// is dropped and the order fixed here, so the same set is always stored the same way.
+const SYMPTOMS = 9;
+const MAX_NOTE = 10_000;
+
+const symptomList: Check<number[]> = (v) =>
+  Array.isArray(v) && v.length <= SYMPTOMS
+    ? [...new Set(v.map(int(0, SYMPTOMS - 1)))].sort((a, b) => a - b)
+    : fail();
+
+// A refused day is reported by the day itself (the row has no id), or null if it is unreadable.
+export function parseCycleDay(raw: unknown): RowResult<CycleDayRow> {
+  return parse(
+    raw,
+    'date',
+    (f) => ({
+      date: req(f, 'date', day),
+      flow: def(f, 'flow', int(0, 4), 0),
+      mood: opt(f, 'mood', int(0, 5)),
+      symptoms: def(f, 'symptoms', symptomList, []),
+      discharge: opt(f, 'discharge', int(0, 6)),
+      sex: opt(f, 'sex', int(0, 2)),
+      pill: def(f, 'pill', bool, false),
+      note: opt(f, 'note', text(MAX_NOTE)),
+      clientUpdatedAt: def(
+        f,
+        'client_updated_at',
+        instant,
+        new Date().toISOString(),
+      ),
+    }),
+    dayIdOf,
+  );
 }
 
 // The table name is only checked to be a short string; which tables are supported is decided

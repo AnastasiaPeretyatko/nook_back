@@ -37,8 +37,7 @@ export class SyncPullQuery {
   @Validate(IsInstant)
   since?: string;
 
-  // Which parts to send: tasks (always), diary, cycle. Diary and cycle do not exist yet, so
-  // naming them changes nothing; anything else is a mistake.
+  // Which parts to send: tasks (always), diary, cycle. Anything else is a mistake.
   @Transform(blankToUndefined)
   @IsOptional()
   @IsString()

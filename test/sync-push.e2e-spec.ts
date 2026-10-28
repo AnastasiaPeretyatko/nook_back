@@ -162,21 +162,6 @@ describe('POST /sync/push', () => {
       ]);
     });
 
-    it('refuses the list the server does not keep yet (the cycle), naming each row', async () => {
-      const res = await push(ann, {
-        cycle_days: [{ id: T1 }, { date: '2026-01-01' }, 5],
-        tasks: [{ id: T4 }],
-      });
-      expect(reasons(res)).toEqual(
-        [
-          `cycle_days:${T1}:unsupported_table`,
-          `cycle_days:null:unsupported_table`,
-          `cycle_days:null:unsupported_table`,
-        ].sort(),
-      );
-      expect((await tasksOf(ann.id)).map((t) => t.id)).toEqual([T4]);
-    });
-
     it('refuses a deletion in a table that is not supported', async () => {
       const res = await push(ann, {
         deleted: [{ table: 'cycle_days', id: T1 }],

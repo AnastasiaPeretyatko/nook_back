@@ -14,6 +14,8 @@ export interface PullResult {
   moods?: Rows;
   tags?: Rows;
   entries?: Rows;
+  // Only with `include=cycle`.
+  cycle_days?: Rows;
 }
 
 // Moments leave as text with all six digits of microseconds (a JS Date would cut them to
@@ -60,11 +62,17 @@ const ENTRY_COLUMNS = `
   coalesce((select array_agg(l.tag_id order by l.tag_id) from diary_entry_tags l
             where l.entry_id = page.id), '{}'::uuid[]) as tag_ids`;
 
+// A day of the cycle, in the shape of the plan (4.2): no user_id. An empty day is a row like any
+// other. Symptoms leave as a list of numbers (the pg driver reads smallint[] that way).
+const CYCLE_COLUMNS = `
+  ${day('date')} as date, flow, mood, symptoms, discharge, sex, pill, note,
+  ${iso('client_updated_at')} as client_updated_at, ${iso('updated_at')} as updated_at`;
+
 // One kind of rows in the answer. `owner` picks the caller's rows; the starter moods have no
 // owner and are everybody's. `maxPage` keeps a page of heavy rows (notes) small, whatever the
 // app asks for: has_more makes up for it.
 interface Part {
-  key: 'tasks' | 'logs' | 'moods' | 'tags' | 'entries';
+  key: 'tasks' | 'logs' | 'moods' | 'tags' | 'entries' | 'cycle_days';
   table: string;
   columns: string;
   owner: string;
@@ -105,6 +113,13 @@ const DIARY_PARTS: Part[] = [
   },
 ];
 
+const CYCLE_PART: Part = {
+  key: 'cycle_days',
+  table: 'cycle_days',
+  columns: CYCLE_COLUMNS,
+  owner: 'user_id = $1',
+};
+
 // The caller's rows newer than $2, oldest first, at least $3 of them unless there are fewer.
 // `cut` is the time of the $3-th row; everything up to and including that time is returned, so
 // rows that share it are never split between two pages (the next page asks for "strictly
@@ -138,12 +153,15 @@ export class SyncPullService {
     const since = query.since ?? null;
     const limit = query.limit ?? DEFAULT_PULL_LIMIT;
 
-    // Tasks and their marks always come. The diary only when asked for: the app has a switch for
-    // it. The cycle does not exist yet, so naming it changes nothing.
-    const wantsDiary = (query.include ?? '').split(',').includes('diary');
-    const parts = wantsDiary
-      ? [TASKS_PART, LOGS_PART, ...DIARY_PARTS]
-      : [TASKS_PART, LOGS_PART];
+    // Tasks and their marks always come. The diary and the cycle only when asked for: the app
+    // has a switch for each (the cycle is health data and is off by default).
+    const include = (query.include ?? '').split(',');
+    const parts = [
+      TASKS_PART,
+      LOGS_PART,
+      ...(include.includes('diary') ? DIARY_PARTS : []),
+      ...(include.includes('cycle') ? [CYCLE_PART] : []),
+    ];
 
     // All reads at once, to spare the wait on a far-away database.
     const pages = await Promise.all(

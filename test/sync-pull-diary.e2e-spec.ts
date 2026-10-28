@@ -106,43 +106,54 @@ describe('GET /sync/pull with the diary', () => {
       });
     });
 
-    it.each([
-      '',
-      '?include=tasks',
-      '?include=cycle',
-      '?include=tasks,cycle',
-      '?include=',
-    ])('does not send the diary %p', async (query) => {
-      const res = await pull(ann, query);
-      expect(Object.keys(res).sort()).toEqual([
-        'has_more',
-        'logs',
-        'next',
-        'tasks',
-      ]);
-      expect(res.tasks).toHaveLength(1);
-    });
+    it.each(['', '?include=tasks', '?include='])(
+      'does not send the diary %p',
+      async (query) => {
+        const res = await pull(ann, query);
+        expect(Object.keys(res).sort()).toEqual([
+          'has_more',
+          'logs',
+          'next',
+          'tasks',
+        ]);
+        expect(res.tasks).toHaveLength(1);
+      },
+    );
 
-    it.each([
-      '?include=diary',
-      '?include=tasks,diary',
-      '?include=diary,cycle,tasks',
-    ])('sends the diary, and the tasks with it, for %p', async (query) => {
-      const res = await pull(ann, query);
-      expect(Object.keys(res).sort()).toEqual([
-        'entries',
-        'has_more',
-        'logs',
-        'moods',
-        'next',
-        'tags',
-        'tasks',
-      ]);
-      expect(res.tasks).toHaveLength(1);
-      expect(ids(res.entries)).toEqual([N1]);
-      expect(ids(res.tags)).toEqual([G1]);
-      expect(ids(own(res.moods))).toEqual([M1]);
-    });
+    it.each(['?include=cycle', '?include=tasks,cycle'])(
+      'does not send the diary for %p, only the cycle',
+      async (query) => {
+        const res = await pull(ann, query);
+        expect(Object.keys(res).sort()).toEqual([
+          'cycle_days',
+          'has_more',
+          'logs',
+          'next',
+          'tasks',
+        ]);
+        expect(res.tasks).toHaveLength(1);
+      },
+    );
+
+    it.each(['?include=diary', '?include=tasks,diary'])(
+      'sends the diary, and the tasks with it, for %p',
+      async (query) => {
+        const res = await pull(ann, query);
+        expect(Object.keys(res).sort()).toEqual([
+          'entries',
+          'has_more',
+          'logs',
+          'moods',
+          'next',
+          'tags',
+          'tasks',
+        ]);
+        expect(res.tasks).toHaveLength(1);
+        expect(ids(res.entries)).toEqual([N1]);
+        expect(ids(res.tags)).toEqual([G1]);
+        expect(ids(own(res.moods))).toEqual([M1]);
+      },
+    );
   });
 
   describe('the starter moods', () => {

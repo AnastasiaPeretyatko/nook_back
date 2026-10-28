@@ -247,15 +247,6 @@ describe('POST /sync/push with the diary', () => {
         await all(`select id from note_moods where user_id = $1`, ann.id),
       ).toEqual([{ id: M1 }]);
     });
-
-    it('refuses the cycle list for now, and writes the diary beside it', async () => {
-      const res = await push(ann, {
-        cycle_days: [{ date: '2026-01-01' }],
-        entries: [{ id: N1 }],
-      });
-      expect(reasons(res)).toEqual(['cycle_days:null:unsupported_table']);
-      expect(await notesOf(ann.id)).toHaveLength(1);
-    });
   });
 
   describe('who the rows belong to', () => {

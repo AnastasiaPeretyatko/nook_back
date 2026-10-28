@@ -1,4 +1,5 @@
 import {
+  parseCycleDay,
   parseDeleted,
   parseEntry,
   parseLog,
@@ -639,5 +640,170 @@ describe('parseTag', () => {
     );
     expect(refusedId(parseTag('x'))).toBeNull();
     expect(refusedId(parseTag({ name: 'x' }))).toBeNull();
+  });
+});
+
+describe('parseCycleDay', () => {
+  const DAY = '2026-01-15';
+  const cycle = (extra: Record<string, unknown> = {}) => ({
+    date: DAY,
+    ...extra,
+  });
+
+  it('takes a day as the app sends it', () => {
+    expect(
+      rowOf(
+        parseCycleDay({
+          user_id: ID,
+          date: DAY,
+          flow: 3,
+          mood: 5,
+          symptoms: [0, 4, 8],
+          discharge: 6,
+          sex: 2,
+          pill: true,
+          note: 'tired',
+          client_updated_at: '2026-01-15T10:00:01.123456Z',
+        }),
+      ),
+    ).toEqual({
+      date: DAY,
+      flow: 3,
+      mood: 5,
+      symptoms: [0, 4, 8],
+      discharge: 6,
+      sex: 2,
+      pill: true,
+      note: 'tired',
+      clientUpdatedAt: '2026-01-15T10:00:01.123456Z',
+    });
+  });
+
+  it('fills defaults when only the day is given: that is an empty day', () => {
+    expect(rowOf(parseCycleDay(cycle()))).toMatchObject({
+      date: DAY,
+      flow: 0,
+      mood: null,
+      symptoms: [],
+      discharge: null,
+      sex: null,
+      pill: false,
+      note: null,
+    });
+  });
+
+  it('takes null for the optional fields', () => {
+    expect(
+      rowOf(
+        parseCycleDay(
+          cycle({ mood: null, discharge: null, sex: null, note: null }),
+        ),
+      ),
+    ).toMatchObject({ mood: null, discharge: null, sex: null, note: null });
+  });
+
+  it('ignores a user_id sent by the client', () => {
+    expect(rowOf(parseCycleDay(cycle({ user_id: OTHER })))).not.toHaveProperty(
+      'userId',
+    );
+  });
+
+  it('accepts every border of every option', () => {
+    for (const [key, max] of [
+      ['flow', 4],
+      ['mood', 5],
+      ['discharge', 6],
+      ['sex', 2],
+    ] as const) {
+      expect(rowOf(parseCycleDay(cycle({ [key]: 0 })))).toHaveProperty(key, 0);
+      expect(rowOf(parseCycleDay(cycle({ [key]: max })))).toHaveProperty(
+        key,
+        max,
+      );
+    }
+  });
+
+  it('drops repeated symptoms and sorts the rest', () => {
+    expect(
+      rowOf(parseCycleDay(cycle({ symptoms: [8, 2, 2, 0, 8] }))),
+    ).toHaveProperty('symptoms', [0, 2, 8]);
+  });
+
+  it('takes all nine symptoms', () => {
+    const all = [8, 7, 6, 5, 4, 3, 2, 1, 0];
+    expect(rowOf(parseCycleDay(cycle({ symptoms: all })))).toHaveProperty(
+      'symptoms',
+      [0, 1, 2, 3, 4, 5, 6, 7, 8],
+    );
+  });
+
+  it('keeps a note of 10 000 characters and replaces a lone surrogate', () => {
+    expect(
+      rowOf(parseCycleDay(cycle({ note: 'a'.repeat(10_000) }))),
+    ).toHaveProperty('note', 'a'.repeat(10_000));
+    expect(rowOf(parseCycleDay(cycle({ note: 'ab\uD83D' })))).toHaveProperty(
+      'note',
+      'ab\uFFFD',
+    );
+  });
+
+  describe('refuses the day, naming it', () => {
+    const bad: [string, Record<string, unknown>][] = [
+      ['a flow of -1', { flow: -1 }],
+      ['a flow of 5', { flow: 5 }],
+      ['a null flow', { flow: null }],
+      ['a flow that is a string', { flow: '1' }],
+      ['a flow that is not whole', { flow: 1.5 }],
+      ['a mood of -1', { mood: -1 }],
+      ['a mood of 6', { mood: 6 }],
+      ['a discharge of -1', { discharge: -1 }],
+      ['a discharge of 7', { discharge: 7 }],
+      ['a sex of -1', { sex: -1 }],
+      ['a sex of 3', { sex: 3 }],
+      ['a mood that is a string', { mood: '2' }],
+      ['a symptom of -1', { symptoms: [-1] }],
+      ['a symptom of 9', { symptoms: [9] }],
+      ['a symptom that is not whole', { symptoms: [1.5] }],
+      ['a symptom that is a string', { symptoms: ['1'] }],
+      ['a symptom that is null', { symptoms: [null] }],
+      ['symptoms that are not a list', { symptoms: 1 }],
+      ['null symptoms', { symptoms: null }],
+      ['ten symptoms', { symptoms: [0, 1, 2, 3, 4, 5, 6, 7, 8, 8] }],
+      ['a pill that is not a boolean', { pill: 1 }],
+      ['a null pill', { pill: null }],
+      ['a note that is not text', { note: 5 }],
+      ['a note of 10 001 characters', { note: 'a'.repeat(10_001) }],
+      ['a note with a NUL', { note: 'a\0b' }],
+      [
+        'a client_updated_at without the Z',
+        { client_updated_at: '2026-01-15T10:00:00' },
+      ],
+      [
+        'a client_updated_at that is not a moment',
+        { client_updated_at: 'now' },
+      ],
+    ];
+
+    it.each(bad)('%s', (_name, extra) => {
+      expect(refusedId(parseCycleDay(cycle(extra)))).toBe(DAY);
+    });
+  });
+
+  describe('refuses a day that cannot be read, with no id', () => {
+    const bad: [string, unknown][] = [
+      ['a missing date', {}],
+      ['a null date', { date: null }],
+      ['a date that is a number', { date: 20260115 }],
+      ['a date that is a moment', { date: '2026-01-15T00:00:00Z' }],
+      ['30 February', { date: '2026-02-30', flow: 9 }],
+      ['a year before 1000', { date: '0999-01-01' }],
+      ['an array', []],
+      ['null', null],
+      ['a string', DAY],
+    ];
+
+    it.each(bad)('%s', (_name, raw) => {
+      expect(refusedId(parseCycleDay(raw))).toBeNull();
+    });
   });
 });

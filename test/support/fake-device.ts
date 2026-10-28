@@ -19,6 +19,7 @@ export interface PullBody {
   moods?: Row[];
   tags?: Row[];
   entries?: Row[];
+  cycle_days?: Row[];
 }
 
 // How the device talks to the server: the test supplies the two calls (already signed in).
@@ -51,6 +52,8 @@ export class Device {
   notes = new Map<string, Row>();
   tags = new Map<string, Row>();
   moods = new Map<string, Row>();
+  // The cycle calendar, by day. There are no deletions: a taken-back mark is an empty day.
+  cycleDays = new Map<string, Row>();
   watermark: string | null = null;
   rejected: Rejected[] = [];
   pulls = 0;
@@ -58,6 +61,7 @@ export class Device {
   private dirtyTasks = new Set<string>();
   private dirtyLogs = new Set<string>();
   private dirtyNotes = new Set<string>();
+  private dirtyDays = new Set<string>();
   private dirty: Record<LabelKind, Set<string>> = {
     tags: new Set(),
     moods: new Set(),
@@ -65,15 +69,19 @@ export class Device {
   // Tombstones to send, as `table|id`.
   private gone = new Set<string>();
 
-  // `diary` is the app's switch: off, it asks for the tasks only.
+  // `diary` and `cycle` are the app's switches: both off, it asks for the tasks only.
   constructor(
     private readonly api: DeviceApi,
     private readonly clock: () => string,
-    private readonly options: { diary?: boolean } = {},
+    private readonly options: { diary?: boolean; cycle?: boolean } = {},
   ) {}
 
   setDiary(on: boolean) {
     this.options.diary = on;
+  }
+
+  setCycle(on: boolean) {
+    this.options.cycle = on;
   }
 
   // ---- tasks and marks
@@ -179,6 +187,26 @@ export class Device {
     }
   }
 
+  // ---- the cycle
+
+  // The app saves a whole day: what is not given is empty, so `day(date)` alone is a day with
+  // nothing marked (how a mark is taken back).
+  day(date: string, fields: Row = {}) {
+    this.cycleDays.set(date, {
+      date,
+      flow: 0,
+      mood: null,
+      symptoms: [],
+      discharge: null,
+      sex: null,
+      pill: false,
+      note: null,
+      ...fields,
+      client_updated_at: this.clock(),
+    });
+    this.dirtyDays.add(date);
+  }
+
   // ---- talking to the server
 
   async sync(order: 'pull-first' | 'push-first' = 'pull-first', limit = 500) {
@@ -206,6 +234,9 @@ export class Device {
       tags: chunks([...this.dirty.tags].map((i) => this.tags.get(i)!)),
       entries: chunks([...this.dirtyNotes].map((i) => this.notes.get(i)!)),
       tasks: chunks([...this.dirtyTasks].map((i) => this.tasks.get(i)!)),
+      cycle_days: chunks(
+        [...this.dirtyDays].map((d) => this.cycleDays.get(d)!),
+      ),
       logs: chunks([...this.dirtyLogs].map((k) => this.logs.get(k)!)),
       deleted: chunks(
         [...this.gone].map((g) => {
@@ -229,13 +260,18 @@ export class Device {
     this.dirtyTasks.clear();
     this.dirtyLogs.clear();
     this.dirtyNotes.clear();
+    this.dirtyDays.clear();
     this.dirty.tags.clear();
     this.dirty.moods.clear();
     this.gone.clear();
   }
 
   private async pullAll(limit: number) {
-    const include = this.options.diary ? '&include=diary' : '';
+    const parts = [
+      ...(this.options.diary ? ['diary'] : []),
+      ...(this.options.cycle ? ['cycle'] : []),
+    ];
+    const include = parts.length > 0 ? `&include=${parts.join(',')}` : '';
     // Overlap once, at the start; follow `next` as it is.
     let since = this.watermark ? withOverlap(this.watermark) : null;
     for (;;) {
@@ -248,6 +284,7 @@ export class Device {
       res.moods?.forEach((m) => this.mergeLabel('moods', m));
       res.tags?.forEach((t) => this.mergeLabel('tags', t));
       res.entries?.forEach((e) => this.mergeNote(e));
+      res.cycle_days?.forEach((d) => this.mergeDay(d));
       if (res.next) this.watermark = res.next;
       if (!res.has_more) break;
       since = res.next;
@@ -320,6 +357,16 @@ export class Device {
     }
   }
 
+  private mergeDay(remote: Row) {
+    const date = remote.date as string;
+    if (
+      this.takes(this.cycleDays.get(date), this.dirtyDays.has(date), remote)
+    ) {
+      this.cycleDays.set(date, remote);
+      this.dirtyDays.delete(date);
+    }
+  }
+
   private mergeLabel(kind: LabelKind, remote: Row) {
     if (this.waitingToBeDeleted(LABEL_TABLE[kind], remote)) return;
     const labelId = remote.id as string;
@@ -349,6 +396,21 @@ export class Device {
         .map((l) => [l.task_id, l.date, l.completed ?? false, l.value ?? null])
         .sort(),
     };
+  }
+
+  cycleSnapshot() {
+    return [...this.cycleDays.values()]
+      .map((d) => [
+        d.date,
+        d.flow,
+        d.mood ?? null,
+        [...((d.symptoms as number[] | undefined) ?? [])].sort(),
+        d.discharge ?? null,
+        d.sex ?? null,
+        d.pill,
+        d.note ?? null,
+      ])
+      .sort();
   }
 
   diarySnapshot() {

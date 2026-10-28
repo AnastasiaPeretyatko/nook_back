@@ -7,6 +7,7 @@ import { createValidationPipe } from './common/validation.pipe';
 import { AuthGuard } from './auth/auth.guard';
 import { AuthModule } from './auth/auth.module';
 import { validateEnv } from './config/env.validation';
+import { CycleModule } from './cycle/cycle.module';
 import { DatabaseModule } from './database/database.module';
 import { DiaryModule } from './diary/diary.module';
 import { HealthModule } from './health/health.module';
@@ -35,6 +36,7 @@ import { UsersModule } from './users/users.module';
     AuthModule,
     TasksModule,
     DiaryModule,
+    CycleModule,
     SyncModule,
   ],
   providers: [

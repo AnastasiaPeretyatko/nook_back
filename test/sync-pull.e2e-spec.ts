@@ -85,8 +85,8 @@ describe('GET /sync/pull', () => {
     });
   });
 
-  it('answers only with tasks and marks unless the diary is asked for (the cycle does not exist yet)', async () => {
-    const res = await pull(ann, '?include=tasks,cycle');
+  it('answers only with tasks and marks unless the diary or the cycle is asked for', async () => {
+    const res = await pull(ann, '?include=tasks');
     expect(Object.keys(res).sort()).toEqual([
       'has_more',
       'logs',
