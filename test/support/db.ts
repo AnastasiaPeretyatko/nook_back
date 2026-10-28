@@ -4,7 +4,7 @@ import { Test, TestingModuleBuilder } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 import { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions';
 import { AppModule } from '../../src/app.module';
-import { configureProxy } from '../../src/app.setup';
+import { configureBodyLimit, configureProxy } from '../../src/app.setup';
 import { assertLocalDatabase } from './test-env';
 
 // The real AppModule on the test database. `controllers` adds test-only routes that still
@@ -28,6 +28,7 @@ export async function createTestApp(
   }
   const app = moduleRef.createNestApplication<NestExpressApplication>();
   configureProxy(app, trustProxyHops);
+  configureBodyLimit(app);
   app.useLogger(false);
   await app.init();
   return app;

@@ -2,11 +2,15 @@
 
 Файл описывает, **как код устроен сейчас**. Обновляется по ходу разработки. Что и зачем решено — в `docs/own-backend/BACKEND_PLAN.md`.
 
-## Сейчас (2026-10-23)
+## Сейчас (2026-10-28)
 
-Стандартный каркас `nest new`: `AppModule` + `AppController` + `AppService` (hello world), тесты, ESLint, Prettier. Ни БД, ни конфигурации, ни бизнес-кода ещё нет.
+Работает: конфигурация и подключение к Neon, миграции, `/health`, единый формат ошибок, вход (почта и пароль, Google, `/me`) — этап B1; личные задачи и отметки дня с маршрутами `GET /sync/pull` и `POST /sync/push` — этап B2. Модули: `config`, `database`, `health`, `auth`, `users`, `tasks` (таблицы), `sync` (маршруты и запись). Дальше — B3 (дневник).
 
-Установлено: `@nestjs/common|core|platform-express` 11, `rxjs`, `@nestjs/config` 4, `@nestjs/typeorm` 11, `typeorm`, `pg`, `typeorm-naming-strategies`, `class-validator`, `class-transformer`. Для входа (B1.2, ещё не подключены в коде): `@nestjs/jwt` 11, `@nestjs/throttler` 6, `argon2` 0.45, `google-auth-library` 11. Не установлено (понадобится позже): `ws`, `firebase-admin` и т.д. — см. этапы в `TASKS.md`. Версии `@nestjs/config`, `@nestjs/typeorm` и `@nestjs/jwt` намеренно **не выше 4, 11 и 11** (см. MEMORY).
+Установлено: `@nestjs/common|core|platform-express` 11, `rxjs`, `@nestjs/config` 4, `@nestjs/typeorm` 11, `typeorm`, `pg`, `typeorm-naming-strategies`, `class-validator`, `class-transformer`, `@nestjs/jwt` 11, `@nestjs/throttler` 6, `argon2` 0.45, `google-auth-library` 11. Не установлено (понадобится позже): `ws`, `firebase-admin` и т.д. — см. этапы в `TASKS.md`. Версии `@nestjs/config`, `@nestjs/typeorm` и `@nestjs/jwt` намеренно **не выше 4, 11 и 11** (см. MEMORY).
+
+### Как читать раздел про `sync`
+
+Порядок чтения: «Таблицы задач» (B2.1) → «Приём `push`: тело и строки» (B2.2) → «Запись задач», «Запись отметок дня», «Удаления» (B2.3–B2.5) → «Маршрут `POST /sync/push`» (B2.6) → «Маршрут `GET /sync/pull`» (B2.7). Проверка по слоям: юнит-тесты логики решений (`src/sync/*.spec.ts`), e2e на писателях (`test/*-writer.e2e-spec.ts`), на маршрутах (`test/sync-push*.e2e-spec.ts`, `test/sync-pull.e2e-spec.ts`) и сквозные по списку «Готово, когда» (`test/sync-scenarios.e2e-spec.ts`).
 
 ### Конфигурация (B0.2)
 
@@ -153,6 +157,66 @@
 - Две одновременные первые попытки одного Google-аккаунта: проигравшая находит победителя и входит в тот же аккаунт (тест принудительно создаёт такую гонку).
 - Для тестов проверка подменяется через `createTestApp([], 0, (b) => b.overrideProvider(GoogleTokenVerifier).useValue(fake))`. Сама проверка покрыта юнит-тестами с настоящими RS256-токенами, подписанными своим ключом ([google-token.verifier.spec.ts](src/auth/google-token.verifier.spec.ts)).
 
+### Таблицы задач (B2.1)
+
+Миграция [CreateTaskTables](src/migrations/1793176217982-CreateTaskTables.ts); сущности [Task](src/tasks/task.entity.ts) и [TaskLog](src/tasks/task-log.entity.ts), модуль [TasksModule](src/tasks/tasks.module.ts) пока только регистрирует их. Тесты — [test/tasks-schema.e2e-spec.ts](test/tasks-schema.e2e-spec.ts).
+
+| Таблица | Главное |
+|---|---|
+| `tasks` | PK `id` (uuid, создаёт устройство); `user_id` (удаляется вместе с пользователем); `parent_id` → `tasks.id`, **отложенный** внешний ключ (`deferrable initially deferred`: проверяется в конце транзакции, подзадача может прийти раньше родителя); проверки `status`, `repeat_type`, `tracking_mode`; `start_date` — `date`; `client_updated_at` (время правки на устройстве) и `updated_at` (ставит сервер); `deleted_at` |
+| `task_logs` | PK `(task_id, user_id, date)` — отдельного id нет; `completed`, `value`, `completed_at`; `task_id` → `tasks` и `user_id` → `users` удаляются каскадом |
+
+- Триггеры: `set_updated_at` на обеих таблицах; `blank_deleted_task` (на `tasks`, при вставке и обновлении строки с `deleted_at`: обнуляет данные — удалённая задача не может «ожить» повторной отправкой; отметки стирает **только при обновлении**, при вставке нельзя: триггер срабатывает до проверки конфликта и стёр бы отметки чужой задачи); `skip_log_of_deleted_task` (на `task_logs`: отметка к удалённой задаче молча не пишется, ошибки нет).
+- Групповых колонок (`group_id`, `assignee_id`) нет — добавит B5. Базовый тест `schema.e2e-spec.ts` сверяет и эти сущности с миграцией.
+- Что **не** проверяет база и должен проверять код: что отметку пишет владелец задачи (внешний ключ связывает отметку только с задачей, не с её хозяином) — это B2.4.
+
+### Приём `push`: тело и строки (B2.2)
+
+- [src/sync/dto/sync-push.dto.ts](src/sync/dto/sync-push.dto.ts) — тело описано мягко: три необязательных списка `tasks`, `logs`, `deleted`, в каждом **не больше 500** элементов (`400 batch_too_large`) и ничего не проверяется внутри элементов. Списки `moods`, `tags`, `entries`, `cycle_days` тоже принимаются (по 500), но только чтобы отказать каждой строке как `unsupported_table`; остальное неизвестное отбрасывается проверкой тела (`whitelist`).
+- [src/sync/push-rows.ts](src/sync/push-rows.ts) — `parseTask`, `parseLog`, `parseDeleted`: каждая строка проверяется **сама по себе** и даёт либо чистый объект (`{row}`), либо отказ (`{id}` — uuid строки или `null`; произвольную строку клиента назад не отдаём). Правило: **всё, что база отвергла бы, отвергается здесь**, потому что ошибка базы откатывает весь `push`. Поэтому проверяются: перечисления, целые в пределах `int4`, минуты 0–1440, конечные числа, настоящий календарный день (`2026-02-30` — отказ), время только в UTC с `Z` (хранится исходной строкой — JS-дата отрезала бы микросекунды), `\0` в тексте (Postgres его не принимает), длины (`title` ≤ 1000, `description` ≤ 50 000, ключи ≤ 100), uuid приводится к нижнему регистру. Отсутствующее поле = значение по умолчанию как в базе; `null` для столбца с умолчанием (`title`, `status`, `tracking_mode`) — отказ. `user_id` из строки не читается вообще.
+- [src/app.setup.ts](src/app.setup.ts) `configureBodyLimit` — лимит JSON-тела 5 МБ **только** для `/sync/push` (остальные маршруты — обычные 100 КБ). Вызывается из `main.ts` и `createTestApp`. Функция обёрнута намеренно: если подключить `express.json()` напрямую, Nest видит middleware с именем `jsonParser` и вообще не включает свой разбор тела для остальных маршрутов.
+- Фильтр ошибок теперь узнаёт «клиентские» ошибки разбора тела (статус 4xx и `expose: true`): `413 payload_too_large` вместо 500.
+- Тесты тела — [test/sync-push-body.e2e-spec.ts](test/sync-push-body.e2e-spec.ts) (идут через настоящий маршрут, см. «Маршрут push»).
+
+### Запись задач (B2.3)
+
+- [src/sync/plan-task-writes.ts](src/sync/plan-task-writes.ts) — `planTaskWrites(rows, userId, known)`: **без базы** решает, какие строки писать, а какие отказать. `known` — задачи, уже лежащие в базе под этими id, их родители и предки родителей. Правила по порядку: одна задача дважды в пакете → побеждает последняя; `group_id` не пуст → `groups_not_supported`; id занят чужой задачей → `id_taken`; своя уже удалённая → строка молча пропускается (остаётся пустой и удалённой, `updated_at` не меняется); родителя нет ни в пакете, ни у этого пользователя (чужой родитель = «нет») → `unknown_parent`; цепочка родителей замыкается на задачу (сама себе родитель, петля в пакете, петля через сохранённые задачи) → `parent_cycle`. Строки судятся все по одному состоянию, отказанные убираются разом, остальные судятся заново — так отказ родителя тянет за собой потомков, а участники петли получают `parent_cycle`, а не `unknown_parent`.
+- [src/sync/task-writer.ts](src/sync/task-writer.ts) — `TaskWriter.write(manager, userId, rows)`: работает **внутри** транзакции `push` (её открывает B2.6). Запрос 1 — рекурсивный поиск: задачи пакета, их родители и предки (поднимается только по задачам этого пользователя). Запрос 2 — одна вставка всей пачки (`insert … on conflict (id) do update`), строки едут одним JSON-значением (`jsonb_to_recordset`). При обновлении **не меняются** `created_at`, `user_id`, `deleted_at`; остальное заменяется целиком (последняя запись побеждает — какая правка новее, решает приложение). Условие `where tasks.user_id = excluded.user_id` не даёт перезаписать чужую строку, даже если она появилась между проверкой и записью.
+- [src/sync/rejection.ts](src/sync/rejection.ts) — коды отказов (`invalid_row`, `id_taken`, `unknown_parent`, `parent_cycle`, `unknown_task`, `groups_not_supported`, `unsupported_table`) и форма `{table, id, reason}`.
+- [src/sync/sync.module.ts](src/sync/sync.module.ts) пока только поставляет `TaskWriter`; маршруты добавятся в B2.6–B2.7.
+- Повторная отправка тех же задач **двигает `updated_at`** (триггер срабатывает на каждое обновление), поэтому другие устройства получат их при следующем `pull` ещё раз. Безвредно, но это лишний трафик; сравнение «изменилось ли что-то» не делалось.
+
+### Запись отметок дня (B2.4)
+
+- [src/sync/plan-log-writes.ts](src/sync/plan-log-writes.ts) — `planLogWrites(rows, userId, tasks)`: без базы. Одна отметка (задача + день) дважды в пакете → побеждает последняя; задачи нет **или она чужая** → `unknown_task` (чужая неотличима от несуществующей: вызывающий ничего не узнаёт о чужой задаче); своя удалённая → отметка молча пропускается, без отказа.
+- [src/sync/log-writer.ts](src/sync/log-writer.ts) — `LogWriter.write(manager, userId, rows)`: в транзакции `push` **после** записи задач (поэтому видит задачи этого же пакета). Запрос 1 — кто хозяин задач, на которые ссылаются отметки; запрос 2 — одна вставка пачки (`jsonb_to_recordset`), ключ `(task_id, user_id, date)`. Правило доступа продублировано в SQL: вставка идёт через `join tasks … t.user_id = $2 and t.deleted_at is null`, так что отметка не попадёт в чужую или удалённую задачу, даже если проверка перед ней обманута. Третий слой — триггер `skip_log_of_deleted_task`.
+- В `rejected` отметка называется `task_logs` (имя таблицы базы, как и в `deleted[].table`), а `id` — id её задачи: у отметки своего id нет, день в ответ не попадает.
+- Групповые задачи (B5) изменят правило: участник группы сможет писать отметку в групповую задачу; пока все задачи личные.
+
+### Удаления (B2.5)
+
+- [src/sync/deletion-writer.ts](src/sync/deletion-writer.ts) — `DeletionWriter.write(manager, userId, rows)`, в транзакции `push` **после** задач и отметок. Для `table: 'tasks'` один запрос: `insert (id, user_id, deleted_at) … on conflict (id) do update … where tasks.user_id = excluded.user_id and tasks.deleted_at is null`. Так: id, которого сервер не видел, становится «надгробием» (позднее пришедшая с другого устройства задача не оживёт — `TaskWriter` пропускает удалённые); своя живая задача помечается удалённой, триггер обнуляет её и стирает отметки; своя уже удалённая не трогается вовсе (повтор безвреден, `updated_at` не двигается); чужая не трогается, а её id возвращается завершающим `select` и уходит в `rejected` как `id_taken`.
+- Любая другая таблица (`diary_entries`, `task_logs`, что угодно) → `unsupported_table`, имя таблицы и id возвращаются как есть, ничего не создаётся. Имя таблицы сравнивается точно (`Tasks` ≠ `tasks`).
+- Подзадачи удалённой задачи сервер **сам не удаляет**: приложение присылает удаление каждой (так было и в старой версии).
+
+### Маршрут `POST /sync/push` (B2.6)
+
+- [src/sync/sync.controller.ts](src/sync/sync.controller.ts) → [src/sync/sync-push.service.ts](src/sync/sync-push.service.ts). Закрыт токеном (как всё по умолчанию); `user_id` берётся из токена. Ответ `200` `{rejected: [{table, id, reason}], server_time}`. Заголовок `X-Device-Id` принимается и ничего не делает (нужен будет в B6).
+- Порядок: (1) каждая строка проходит `parseTask`/`parseLog`/`parseDeleted` — плохие идут в `rejected` как `invalid_row`; (2) записи в **одной транзакции**: задачи → отметки → удаления (отметка может ссылаться на задачу того же запроса, удаление стирает отметки); (3) ответ. Ошибка базы откатывает всё и даёт `500 internal_error` — приложение пошлёт пакет снова (запись идемпотентна).
+- Если после проверки писать нечего (пустой запрос, только плохие строки) — транзакция **не открывается**, база не трогается.
+- Имена таблиц в `rejected`: `tasks`, `task_logs` (id = id задачи), `deleted` (плохая запись списка `deleted`, id если читается), для списков, которых сервер ещё не ведёт: `moods`, `tags`, `diary_entries`, `cycle_days`; для удалений — имя таблицы, как прислали.
+- `server_time` — часы сервера приложения (не базы), только для сведения; водяная отметка для `pull` — это `next` из `GET /sync/pull`, не `server_time`.
+- Между запросами к базе лежит океан, поэтому число запросов фиксировано: задачи 2, отметки 2, удаления 1, плюс `BEGIN`/`COMMIT`.
+
+### Маршрут `GET /sync/pull` (B2.7)
+
+- [src/sync/sync.controller.ts](src/sync/sync.controller.ts) → [src/sync/sync-pull.service.ts](src/sync/sync-pull.service.ts); параметры — [src/sync/dto/sync-pull.query.ts](src/sync/dto/sync-pull.query.ts): `since` (UTC-момент с `Z`, как `next`; пусто = всё), `include` (`tasks`/`diary`/`cycle` через запятую — только проверяется, пока всё равно отдаются одни задачи и отметки), `limit` (целое 1–1000, по умолчанию 500). Всё остальное — `400 validation_failed`.
+- Ответ: `{next, has_more, tasks, logs}`; частей, которых нет (`moods`, `tags`, `entries`, `cycle_days`, `groups`), в ответе нет вовсе. Только **свои** строки (`user_id` из токена). Строка задачи — ключи `taskToRow` + `user_id`, `updated_at`, `deleted_at` (+ `group_id`/`assignee_id`, пока всегда `null`); отметки — ключи `logToRow` + `user_id`, `updated_at`. Удалённая задача приходит пустой строкой с `deleted_at`.
+- Времена — **текстом с шестью знаками микросекунд** (`2026-03-01T10:00:00.123457Z`), дни — `YYYY-MM-DD`, оба собираются в SQL (`to_char`), не через JS-даты. Сравнение «новее `since`» — до микросекунды.
+- Страница каждой таблицы: строки с `updated_at > since` по возрастанию, не меньше `limit` (если столько есть) и **до конца группы с одинаковым временем** на границе — иначе следующий запрос «строго новее» их потерял бы. `has_more` — обрезана ли хоть одна таблица. `next`: обрезаны таблицы → самое раннее из их последних времён; иначе самое позднее из всех присланных строк; строк нет → `since` (или `null`, если и его нет).
+- Две таблицы читаются параллельно; запрос идёт по индексу `(user_id, updated_at)` (`with … as not materialized`).
+- Тесты: [test/sync-pull.e2e-spec.ts](test/sync-pull.e2e-spec.ts); точное время для тестов задаётся прямым `update` с отключённым триггером.
+
 ## Куда движемся
 
 Схема из плана (раздел 7–8); имена модулей — предложение, уточним на старте каждого этапа.
@@ -172,7 +236,7 @@ NestJS (Render free) ──► PostgreSQL (Neon free)
 | `config`, `database` | B0 | переменные окружения, подключение к Neon, миграции |
 | `health` | B0 | `/health` (без БД), `/health/db` |
 | `auth`, `users` | B1 | регистрация, вход, Google, JWT + refresh |
-| `sync` | B2–B4 | `pull` / `push` для задач, дневника, цикла |
+| `tasks`, `sync` | B2 ✅ | таблицы и `pull` / `push` для личных задач и отметок; дневник (B3) и цикл (B4) добавятся в те же маршруты |
 | `groups` | B5 | группы, участники, коды приглашения, права |
 | `realtime` | B6 | WebSocket-шлюз `/ws` |
 | `push` | B7 | устройства, отправка через FCM |

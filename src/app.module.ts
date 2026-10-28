@@ -9,6 +9,8 @@ import { AuthModule } from './auth/auth.module';
 import { validateEnv } from './config/env.validation';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
+import { SyncModule } from './sync/sync.module';
+import { TasksModule } from './tasks/tasks.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -30,6 +32,8 @@ import { UsersModule } from './users/users.module';
     HealthModule,
     UsersModule,
     AuthModule,
+    TasksModule,
+    SyncModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

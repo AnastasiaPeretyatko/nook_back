@@ -101,6 +101,14 @@ describe('AllExceptionsFilter', () => {
     expect((res.body as { code: string }).code).toBe('bad_request');
   });
 
+  it('answers 413 payload_too_large for a body over the size limit', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/t/json')
+      .send({ text: 'x'.repeat(200_000) })
+      .expect(413);
+    expect((res.body as { code: string }).code).toBe('payload_too_large');
+  });
+
   it('hides the details of an unexpected error', async () => {
     const res = await request(app.getHttpServer()).get('/t/boom').expect(500);
     expect(res.body).toEqual({

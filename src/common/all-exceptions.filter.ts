@@ -20,6 +20,18 @@ const STATUS_CODES: Record<number, string> = {
   503: 'service_unavailable',
 };
 
+function isClientError(
+  error: unknown,
+): error is { status: number; message: string } {
+  const e = error as { status?: unknown; expose?: unknown } | null;
+  return (
+    typeof e?.status === 'number' &&
+    e.status >= 400 &&
+    e.status < 500 &&
+    e.expose === true
+  );
+}
+
 // Every error leaves the server as `{ code, message }` (API contract, section 4 of the plan).
 // Throw `new XException({ code: 'bad_code', message: '...' })` to choose the code.
 @Catch()
@@ -56,6 +68,14 @@ export class AllExceptionsFilter implements ExceptionFilter {
             ? 'validation_failed'
             : (STATUS_CODES[status] ??
               (status >= 500 ? 'internal_error' : `http_${status}`));
+    }
+
+    // Errors from the body parser (a body over the limit) are plain objects with a status and
+    // `expose: true`, not Nest exceptions; without this they would become a 500.
+    else if (isClientError(exception)) {
+      status = exception.status;
+      code = STATUS_CODES[status] ?? `http_${status}`;
+      message = exception.message;
     }
 
     // Unknown errors are logged with the stack and never shown to the client.
