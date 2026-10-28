@@ -2,11 +2,16 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { SyncPushDto } from './dto/sync-push.dto';
 import { DeletionWriter } from './deletion-writer';
+import { EntryWriter } from './entry-writer';
+import { LabelWriter } from './label-writer';
 import { LogWriter } from './log-writer';
 import {
   idOf,
   parseDeleted,
+  parseEntry,
   parseLog,
+  parseMood,
+  parseTag,
   parseTask,
   RowResult,
 } from './push-rows';
@@ -20,25 +25,24 @@ export interface PushResult {
 }
 
 // Lists of tables that do not exist yet, with the table name they are reported under.
-const UNSUPPORTED_LISTS = [
-  ['moods', 'moods'],
-  ['tags', 'tags'],
-  ['entries', 'diary_entries'],
-  ['cycle_days', 'cycle_days'],
-] as const;
+const UNSUPPORTED_LISTS = [['cycle_days', 'cycle_days']] as const;
 
 @Injectable()
 export class SyncPushService {
   constructor(
     private readonly dataSource: DataSource,
+    private readonly labels: LabelWriter,
+    private readonly entries: EntryWriter,
     private readonly tasks: TaskWriter,
     private readonly logs: LogWriter,
     private readonly deletions: DeletionWriter,
   ) {}
 
-  // Checks every row on its own, then writes tasks, marks and deletions in that order in ONE
-  // transaction: a database error rolls everything back (the app sends the batch again), while
-  // a refused row only lands in `rejected` and the rest is written.
+  // Checks every row on its own, then writes moods, tags, notes (with their links), tasks,
+  // marks and deletions in that order in ONE transaction: a database error rolls everything back
+  // (the app sends the batch again), while a refused row only lands in `rejected` and the rest
+  // is written. The order matters: a note may name a tag created in the same request, a mark a
+  // new task, and a deletion comes last so that it wins over anything written before it.
   async push(userId: string, dto: SyncPushDto): Promise<PushResult> {
     const rejected: Rejection[] = [];
 
@@ -56,6 +60,9 @@ export class SyncPushService {
       }
       return rows;
     };
+    const moodRows = parseList(dto.moods, 'note_moods', parseMood);
+    const tagRows = parseList(dto.tags, 'note_tags', parseTag);
+    const entryRows = parseList(dto.entries, 'diary_entries', parseEntry);
     const taskRows = parseList(dto.tasks, 'tasks', parseTask);
     const logRows = parseList(dto.logs, 'task_logs', parseLog);
     // Without a readable table name there is nothing better to call the table.
@@ -72,11 +79,22 @@ export class SyncPushService {
     }
 
     // Nothing to write: do not wake the database for it.
-    if (taskRows.length + logRows.length + deletedRows.length > 0) {
+    const lists = [
+      moodRows,
+      tagRows,
+      entryRows,
+      taskRows,
+      logRows,
+      deletedRows,
+    ];
+    if (lists.some((list) => list.length > 0)) {
       await this.dataSource.transaction(async (manager) => {
-        rejected.push(...(await this.tasks.write(manager, userId, taskRows)));
-        rejected.push(...(await this.logs.write(manager, userId, logRows)));
         rejected.push(
+          ...(await this.labels.writeMoods(manager, userId, moodRows)),
+          ...(await this.labels.writeTags(manager, userId, tagRows)),
+          ...(await this.entries.write(manager, userId, entryRows)),
+          ...(await this.tasks.write(manager, userId, taskRows)),
+          ...(await this.logs.write(manager, userId, logRows)),
           ...(await this.deletions.write(manager, userId, deletedRows)),
         );
       });

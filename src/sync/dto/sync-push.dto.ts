@@ -27,8 +27,6 @@ export class SyncPushDto {
   @IsArray()
   deleted?: unknown[];
 
-  // Not supported yet (diary B3, cycle B4). Listed so that they are refused in `rejected`
-  // instead of being dropped without a word: the app would think they were saved.
   @IsOptional()
   @ArrayMaxSize(MAX_ROWS_PER_PUSH, tooMany)
   @IsArray()
@@ -44,6 +42,8 @@ export class SyncPushDto {
   @IsArray()
   entries?: unknown[];
 
+  // Not supported yet (cycle, B4). Listed so that it is refused in `rejected` instead of being
+  // dropped without a word: the app would think it was saved.
   @IsOptional()
   @ArrayMaxSize(MAX_ROWS_PER_PUSH, tooMany)
   @IsArray()

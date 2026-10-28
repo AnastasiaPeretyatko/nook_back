@@ -2,12 +2,18 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { DEFAULT_PULL_LIMIT, SyncPullQuery } from './dto/sync-pull.query';
 
+type Rows = Record<string, unknown>[];
+
 export interface PullResult {
-  // The time to ask from next. Null only when the user has no rows at all and gave no `since`.
+  // The time to ask from next. Null only when there are no rows at all and no `since` was given.
   next: string | null;
   has_more: boolean;
-  tasks: Record<string, unknown>[];
-  logs: Record<string, unknown>[];
+  tasks: Rows;
+  logs: Rows;
+  // Only with `include=diary`.
+  moods?: Rows;
+  tags?: Rows;
+  entries?: Rows;
 }
 
 // Moments leave as text with all six digits of microseconds (a JS Date would cut them to
@@ -32,15 +38,82 @@ const LOG_COLUMNS = `
   ${iso('completed_at')} as completed_at, ${iso('client_updated_at')} as client_updated_at,
   ${iso('updated_at')} as updated_at`;
 
+// The diary, in the shape of the plan (4.2): no user_id. A note carries its moods and tags
+// inside (sorted, so that the same set always reads the same way): the app used to ask twice
+// for every note.
+const MOOD_COLUMNS = `
+  id, name, emoji, ${iso('created_at')} as created_at,
+  ${iso('client_updated_at')} as client_updated_at, ${iso('updated_at')} as updated_at,
+  ${iso('deleted_at')} as deleted_at`;
+
+const TAG_COLUMNS = `
+  id, name, color_key, ${iso('created_at')} as created_at,
+  ${iso('client_updated_at')} as client_updated_at, ${iso('updated_at')} as updated_at,
+  ${iso('deleted_at')} as deleted_at`;
+
+const ENTRY_COLUMNS = `
+  id, title, body, cover_image, images, is_favorite, status,
+  ${iso('created_at')} as created_at, ${iso('client_updated_at')} as client_updated_at,
+  ${iso('updated_at')} as updated_at, ${iso('deleted_at')} as deleted_at,
+  coalesce((select array_agg(l.mood_id order by l.mood_id) from diary_entry_moods l
+            where l.entry_id = page.id), '{}'::uuid[]) as mood_ids,
+  coalesce((select array_agg(l.tag_id order by l.tag_id) from diary_entry_tags l
+            where l.entry_id = page.id), '{}'::uuid[]) as tag_ids`;
+
+// One kind of rows in the answer. `owner` picks the caller's rows; the starter moods have no
+// owner and are everybody's. `maxPage` keeps a page of heavy rows (notes) small, whatever the
+// app asks for: has_more makes up for it.
+interface Part {
+  key: 'tasks' | 'logs' | 'moods' | 'tags' | 'entries';
+  table: string;
+  columns: string;
+  owner: string;
+  maxPage?: number;
+}
+
+const TASKS_PART: Part = {
+  key: 'tasks',
+  table: 'tasks',
+  columns: TASK_COLUMNS,
+  owner: 'user_id = $1',
+};
+const LOGS_PART: Part = {
+  key: 'logs',
+  table: 'task_logs',
+  columns: LOG_COLUMNS,
+  owner: 'user_id = $1',
+};
+const DIARY_PARTS: Part[] = [
+  {
+    key: 'moods',
+    table: 'note_moods',
+    columns: MOOD_COLUMNS,
+    owner: '(user_id = $1 or user_id is null)',
+  },
+  {
+    key: 'tags',
+    table: 'note_tags',
+    columns: TAG_COLUMNS,
+    owner: 'user_id = $1',
+  },
+  {
+    key: 'entries',
+    table: 'diary_entries',
+    columns: ENTRY_COLUMNS,
+    owner: 'user_id = $1',
+    maxPage: 50,
+  },
+];
+
 // The caller's rows newer than $2, oldest first, at least $3 of them unless there are fewer.
 // `cut` is the time of the $3-th row; everything up to and including that time is returned, so
 // rows that share it are never split between two pages (the next page asks for "strictly
 // newer" and would lose the rest). `more` says whether anything lies beyond. `not materialized`
 // lets every use of `page` follow the (user_id, updated_at) index instead of reading it all first.
-const pageQuery = (table: string, columns: string) => `
+const pageQuery = ({ table, columns, owner }: Part) => `
   with page as not materialized (
     select * from ${table}
-    where user_id = $1 and ($2::timestamptz is null or updated_at > $2::timestamptz)
+    where ${owner} and ($2::timestamptz is null or updated_at > $2::timestamptz)
   ), cut as (
     select updated_at from page order by updated_at offset ($3::int - 1) limit 1
   )
@@ -65,14 +138,18 @@ export class SyncPullService {
     const since = query.since ?? null;
     const limit = query.limit ?? DEFAULT_PULL_LIMIT;
 
-    // `include` is not read: tasks always come, and diary and cycle do not exist yet.
-    // Two reads at once, to halve the wait on a far-away database.
-    const [tasks, logs] = await Promise.all([
-      this.page('tasks', TASK_COLUMNS, userId, since, limit),
-      this.page('task_logs', LOG_COLUMNS, userId, since, limit),
-    ]);
+    // Tasks and their marks always come. The diary only when asked for: the app has a switch for
+    // it. The cycle does not exist yet, so naming it changes nothing.
+    const wantsDiary = (query.include ?? '').split(',').includes('diary');
+    const parts = wantsDiary
+      ? [TASKS_PART, LOGS_PART, ...DIARY_PARTS]
+      : [TASKS_PART, LOGS_PART];
 
-    const pages = [tasks, logs];
+    // All reads at once, to spare the wait on a far-away database.
+    const pages = await Promise.all(
+      parts.map((part) => this.page(part, userId, since, limit)),
+    );
+
     const truncated = pages.filter((p) => p.truncated);
     // Cut short: continue from the earliest of the cut tables' last times, so none of them
     // skips a row (a table already ahead of it just repeats a few rows, which is harmless).
@@ -88,26 +165,29 @@ export class SyncPullService {
           ? stamps.reduce((a, b) => (a < b ? a : b))
           : stamps.reduce((a, b) => (a > b ? a : b));
 
-    return {
+    const result: PullResult = {
       next,
       has_more: truncated.length > 0,
-      tasks: tasks.rows,
-      logs: logs.rows,
+      tasks: [],
+      logs: [],
     };
+    parts.forEach((part, i) => {
+      result[part.key] = pages[i].rows;
+    });
+    return result;
   }
 
   private async page(
-    table: string,
-    columns: string,
+    part: Part,
     userId: string,
     since: string | null,
     limit: number,
   ): Promise<Page> {
     const found: (Record<string, unknown> & { more: boolean })[] =
-      await this.dataSource.query(pageQuery(table, columns), [
+      await this.dataSource.query(pageQuery(part), [
         userId,
         since,
-        limit,
+        Math.min(limit, part.maxPage ?? limit),
       ]);
     // `more` is the same on every row; it is not part of the answer.
     const truncated = found[0]?.more ?? false;

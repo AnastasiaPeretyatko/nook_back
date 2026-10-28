@@ -226,26 +226,26 @@ describe('DeletionWriter', () => {
   describe('other tables', () => {
     it('refuses them as unsupported_table, naming the table and the id', async () => {
       const rejected = await remove(ann, [
-        gone('diary_entries', T1),
+        gone('cycle_days', T1),
         gone('task_logs', T2),
         gone('whatever', T3),
       ]);
       expect(rejected).toEqual([
-        { table: 'diary_entries', id: T1, reason: 'unsupported_table' },
+        { table: 'cycle_days', id: T1, reason: 'unsupported_table' },
         { table: 'task_logs', id: T2, reason: 'unsupported_table' },
         { table: 'whatever', id: T3, reason: 'unsupported_table' },
       ]);
     });
 
     it('does not create anything for them', async () => {
-      await remove(ann, [gone('diary_entries', T1)]);
+      await remove(ann, [gone('cycle_days', T1)]);
       expect(await ds.query(`select id from tasks`)).toEqual([]);
     });
 
     it('still deletes the tasks listed beside them', async () => {
       await addTask(ann, T1);
       const rejected = await remove(ann, [
-        gone('diary_entries', T2),
+        gone('cycle_days', T2),
         gone('tasks', T1),
       ]);
       expect(rejected.map((r) => r.reason)).toEqual(['unsupported_table']);

@@ -4,6 +4,7 @@ import { DataSource } from 'typeorm';
 import { parseTask } from '../src/sync/push-rows';
 import { TaskWriter } from '../src/sync/task-writer';
 import { createTestApp, truncateAll } from './support/db';
+import { Device, withOverlap } from './support/fake-device';
 
 const id = (n: number) =>
   `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -55,10 +56,6 @@ describe('Sync scenarios (the "done when" list of stage B2)', () => {
       .expect(200);
     return res.body as PullResponse;
   };
-
-  // What the client does at the start of a sync: its saved watermark minus 5 seconds.
-  const withOverlap = (next: string) =>
-    new Date(Date.parse(next) - 5000).toISOString();
 
   // Everything about a pulled row except the server's own stamp, in a fixed order (the order
   // of a pull follows updated_at, which a repeated push moves).
@@ -371,179 +368,21 @@ describe('Sync scenarios (the "done when" list of stage B2)', () => {
   });
 
   describe('two devices of one account exchange data through the server and agree', () => {
-    // A small stand-in for the app: it keeps its own copy, remembers what is not sent yet,
-    // pulls with the rules of `pullAction` and pushes what is dirty.
     let tick = 0;
     const clock = () =>
       new Date(Date.UTC(2026, 0, 1, 0, 0, ++tick)).toISOString();
-    const time = (v: unknown) => Date.parse(v as string);
-
-    class Device {
-      tasks = new Map<string, Row>();
-      logs = new Map<string, Row>();
-      watermark: string | null = null;
-      rejected: PushResponse['rejected'] = [];
-      private dirtyTasks = new Set<string>();
-      private dirtyLogs = new Set<string>();
-      private gone = new Set<string>();
-
-      constructor(private readonly who: Session) {}
-
-      edit(taskId: string, fields: Row) {
-        this.tasks.set(taskId, {
-          ...this.tasks.get(taskId),
-          ...fields,
-          id: taskId,
-          client_updated_at: clock(),
-        });
-        this.dirtyTasks.add(taskId);
-      }
-
-      mark(taskId: string, date: string, fields: Row) {
-        const key = `${taskId}|${date}`;
-        this.logs.set(key, {
-          ...this.logs.get(key),
-          ...fields,
-          task_id: taskId,
-          date,
-          client_updated_at: clock(),
-        });
-        this.dirtyLogs.add(key);
-      }
-
-      remove(taskId: string) {
-        this.dropTask(taskId);
-        this.dirtyTasks.delete(taskId);
-        this.gone.add(taskId);
-      }
-
-      private dropTask(taskId: string) {
-        this.tasks.delete(taskId);
-        for (const key of [...this.logs.keys()]) {
-          if (key.startsWith(taskId)) {
-            this.logs.delete(key);
-            this.dirtyLogs.delete(key);
-          }
-        }
-      }
-
-      async sync(
-        order: 'pull-first' | 'push-first' = 'pull-first',
-        limit = 500,
-      ) {
-        if (order === 'pull-first') {
-          await this.pullAll(limit);
-          await this.pushAll();
-        } else {
-          await this.pushAll();
-          await this.pullAll(limit);
-        }
-      }
-
-      private async pushAll() {
-        const chunks = <T>(list: T[]) =>
-          Array.from({ length: Math.ceil(list.length / 500) }, (_, i) =>
-            list.slice(i * 500, i * 500 + 500),
-          );
-        const tasks = chunks(
-          [...this.dirtyTasks].map((i) => this.tasks.get(i)!),
-        );
-        const logs = chunks([...this.dirtyLogs].map((k) => this.logs.get(k)!));
-        const deleted = chunks(
-          [...this.gone].map((i) => ({ table: 'tasks', id: i })),
-        );
-        for (
-          let i = 0;
-          i < Math.max(tasks.length, logs.length, deleted.length);
-          i++
-        ) {
-          const res = await push(this.who, {
-            tasks: tasks[i] ?? [],
-            logs: logs[i] ?? [],
-            deleted: deleted[i] ?? [],
-          });
-          this.rejected.push(...res.rejected);
-        }
-        this.dirtyTasks.clear();
-        this.dirtyLogs.clear();
-        this.gone.clear();
-      }
-
-      private async pullAll(limit: number) {
-        // Overlap once, at the start; follow `next` as it is.
-        let since = this.watermark ? withOverlap(this.watermark) : null;
-        for (;;) {
-          const res = await pull(
-            this.who,
-            `?limit=${limit}${since ? `&since=${since}` : ''}`,
-          );
-          res.tasks.forEach((t) => this.mergeTask(t));
-          res.logs.forEach((l) => this.mergeLog(l));
-          if (res.next) this.watermark = res.next;
-          if (!res.has_more) return;
-          since = res.next;
-        }
-      }
-
-      // pullAction: a deletion wins; a clean copy takes whatever comes; a dirty one keeps
-      // itself only if it is newer by the device's own clock.
-      private mergeTask(remote: Row) {
-        const taskId = remote.id as string;
-        const local = this.tasks.get(taskId);
-        if (remote.deleted_at) {
-          if (local) this.dropTask(taskId);
-          this.dirtyTasks.delete(taskId);
-        } else if (
-          !local ||
-          !this.dirtyTasks.has(taskId) ||
-          time(remote.client_updated_at) > time(local.client_updated_at)
-        ) {
-          this.tasks.set(taskId, remote);
-          this.dirtyTasks.delete(taskId);
-        }
-      }
-
-      private mergeLog(remote: Row) {
-        const key = `${remote.task_id as string}|${remote.date as string}`;
-        const local = this.logs.get(key);
-        if (
-          !local ||
-          !this.dirtyLogs.has(key) ||
-          time(remote.client_updated_at) > time(local.client_updated_at)
-        ) {
-          this.logs.set(key, remote);
-          this.dirtyLogs.delete(key);
-        }
-      }
-
-      snapshot() {
-        return {
-          tasks: [...this.tasks.values()]
-            .map((t) => [
-              t.id,
-              t.parent_id ?? null,
-              t.title ?? '',
-              t.status ?? 'active',
-            ])
-            .sort(),
-          logs: [...this.logs.values()]
-            .map((l) => [
-              l.task_id,
-              l.date,
-              l.completed ?? false,
-              l.value ?? null,
-            ])
-            .sort(),
-        };
-      }
-    }
+    const deviceOf = (who: Session) =>
+      new Device(
+        { push: (body) => push(who, body), pull: (query) => pull(who, query) },
+        clock,
+      );
 
     let phone: Device;
     let tablet: Device;
     beforeEach(() => {
       tick = 0;
-      phone = new Device(ann);
-      tablet = new Device(ann);
+      phone = deviceOf(ann);
+      tablet = deviceOf(ann);
     });
 
     it('the tablet receives what the phone made, subtasks and marks included', async () => {
@@ -697,7 +536,7 @@ describe('Sync scenarios (the "done when" list of stage B2)', () => {
       phone.edit(T1, { title: 'private' });
       phone.mark(T1, '2026-01-15', { completed: true });
       await phone.sync();
-      const strangers = new Device(bob);
+      const strangers = deviceOf(bob);
       await strangers.sync();
       expect(strangers.snapshot()).toEqual({ tasks: [], logs: [] });
     });

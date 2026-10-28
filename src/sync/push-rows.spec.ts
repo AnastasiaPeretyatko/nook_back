@@ -1,7 +1,16 @@
-import { parseDeleted, parseLog, parseTask } from './push-rows';
+import {
+  parseDeleted,
+  parseEntry,
+  parseLog,
+  parseMood,
+  parseTag,
+  parseTask,
+} from './push-rows';
 
 const ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const OTHER = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const id = (n: number) =>
+  `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 const task = (extra: Record<string, unknown> = {}) => ({ id: ID, ...extra });
 const log = (extra: Record<string, unknown> = {}) => ({
@@ -175,8 +184,8 @@ describe('parseTask', () => {
     ];
 
     it.each(bad)('%s', (_name, extra) => {
-      const id = 'id' in extra ? undefined : ID;
-      expect(refusedId(parseTask(task(extra)))).toBe(id ?? null);
+      const expected = 'id' in extra ? undefined : ID;
+      expect(refusedId(parseTask(task(extra)))).toBe(expected ?? null);
     });
   });
 
@@ -308,5 +317,327 @@ describe('parseDeleted', () => {
     expect(refusedId(parseDeleted({ table: 'a\0', id: ID }))).toBe(ID);
     expect(refusedId(parseDeleted({ table: 'x'.repeat(65), id: ID }))).toBe(ID);
     expect(refusedId(parseDeleted('tasks'))).toBeNull();
+  });
+});
+
+describe('parseEntry', () => {
+  const entry = (extra: Record<string, unknown> = {}) => ({ id: ID, ...extra });
+
+  it('takes a full note as the app sends it', () => {
+    const row = rowOf(
+      parseEntry({
+        id: ID,
+        title: 'A day',
+        body: '[{"insert":"text\\n"}]',
+        cover_image: 'cover.jpg',
+        images: '["a.jpg","b.jpg"]',
+        is_favorite: true,
+        status: 'draft',
+        created_at: '2026-01-15T10:00:00.123456Z',
+        client_updated_at: '2026-01-15T10:00:01.654321Z',
+        mood_ids: [OTHER],
+        tag_ids: [ID, OTHER],
+      }),
+    );
+    expect(row).toEqual({
+      id: ID,
+      title: 'A day',
+      body: '[{"insert":"text\\n"}]',
+      coverImage: 'cover.jpg',
+      images: '["a.jpg","b.jpg"]',
+      isFavorite: true,
+      status: 'draft',
+      createdAt: '2026-01-15T10:00:00.123456Z',
+      clientUpdatedAt: '2026-01-15T10:00:01.654321Z',
+      moodIds: [OTHER],
+      tagIds: [ID, OTHER],
+    });
+  });
+
+  it('fills the database defaults when only the id is given, and leaves the labels alone', () => {
+    const row = rowOf(parseEntry(entry()));
+    expect(row).toMatchObject({
+      title: '',
+      body: '',
+      coverImage: null,
+      images: '[]',
+      isFavorite: false,
+      status: 'normal',
+      moodIds: null,
+      tagIds: null,
+    });
+    expect(row.createdAt).toMatch(/^\d{4}-.*Z$/);
+  });
+
+  describe('the labels of a note', () => {
+    it('keeps an empty list as empty (it erases the labels) and absent or null as "not said"', () => {
+      expect(
+        rowOf(parseEntry(entry({ mood_ids: [], tag_ids: [] }))),
+      ).toMatchObject({
+        moodIds: [],
+        tagIds: [],
+      });
+      expect(
+        rowOf(parseEntry(entry({ mood_ids: null, tag_ids: null }))),
+      ).toMatchObject({
+        moodIds: null,
+        tagIds: null,
+      });
+      expect(rowOf(parseEntry(entry({ mood_ids: [] })))).toMatchObject({
+        moodIds: [],
+        tagIds: null,
+      });
+    });
+
+    it('lower-cases the ids and drops repeats', () => {
+      const row = rowOf(
+        parseEntry(entry({ tag_ids: [OTHER.toUpperCase(), OTHER, ID, ID] })),
+      );
+      expect(row.tagIds).toEqual([OTHER, ID]);
+    });
+
+    it('takes 100 of each and refuses 101', () => {
+      const many = (n: number) =>
+        Array.from({ length: n }, (_, i) => id(i + 1));
+      expect(
+        rowOf(parseEntry(entry({ mood_ids: many(100) }))).moodIds,
+      ).toHaveLength(100);
+      expect(
+        rowOf(parseEntry(entry({ tag_ids: many(100) }))).tagIds,
+      ).toHaveLength(100);
+      expect(refusedId(parseEntry(entry({ mood_ids: many(101) })))).toBe(ID);
+      expect(refusedId(parseEntry(entry({ tag_ids: many(101) })))).toBe(ID);
+    });
+
+    it('counts the repeats towards the 100 (the list sent is what is limited)', () => {
+      expect(
+        refusedId(parseEntry(entry({ tag_ids: Array(101).fill(ID) }))),
+      ).toBe(ID);
+    });
+
+    it('refuses a list that is not a list, or holds something that is not a uuid', () => {
+      for (const bad of [
+        'abc',
+        5,
+        {},
+        [1],
+        ['abc'],
+        [ID, 'abc'],
+        [null],
+        [[ID]],
+      ]) {
+        expect(refusedId(parseEntry(entry({ mood_ids: bad })))).toBe(ID);
+        expect(refusedId(parseEntry(entry({ tag_ids: bad })))).toBe(ID);
+      }
+    });
+  });
+
+  describe('refuses the note, naming its id', () => {
+    const bad: [string, Record<string, unknown>][] = [
+      ['a title that is not text', { title: 5 }],
+      ['a null title', { title: null }],
+      ['a title over 1000 characters', { title: 'x'.repeat(1001) }],
+      ['a null body', { body: null }],
+      ['a body over 1,000,000 characters', { body: 'x'.repeat(1_000_001) }],
+      ['a cover_image over 2048 characters', { cover_image: 'x'.repeat(2049) }],
+      ['a cover_image that is a number', { cover_image: 1 }],
+      ['images over 100,000 characters', { images: 'x'.repeat(100_001) }],
+      ['images that is a real list, not text', { images: ['a.jpg'] }],
+      ['a null images', { images: null }],
+      ['is_favorite that is not a boolean', { is_favorite: 1 }],
+      ['a null is_favorite', { is_favorite: null }],
+      ['an unknown status', { status: 'done' }],
+      ['a status of the tasks', { status: 'active' }],
+      ['a null status', { status: null }],
+      ['a NUL in the title', { title: 'a\0b' }],
+      ['a NUL in the body', { body: 'a\0b' }],
+      ['a NUL in the images', { images: '[\0]' }],
+      ['a created_at without the Z', { created_at: '2026-01-15T10:00:00' }],
+      [
+        'a client_updated_at on 30 February',
+        { client_updated_at: '2026-02-30T10:00:00Z' },
+      ],
+    ];
+    it.each(bad)('%s', (_name, extra) => {
+      expect(refusedId(parseEntry(entry(extra)))).toBe(ID);
+    });
+  });
+
+  it('accepts the edges of every length', () => {
+    const row = rowOf(
+      parseEntry(
+        entry({
+          title: 'x'.repeat(1000),
+          body: 'x'.repeat(1_000_000),
+          cover_image: 'x'.repeat(2048),
+          images: 'x'.repeat(100_000),
+        }),
+      ),
+    );
+    expect(row.body).toHaveLength(1_000_000);
+  });
+
+  it('accepts all three statuses', () => {
+    for (const status of ['draft', 'normal', 'archived']) {
+      expect(rowOf(parseEntry(entry({ status }))).status).toBe(status);
+    }
+  });
+
+  it('replaces half an emoji with U+FFFD in the text, and leaves whole ones alone', () => {
+    const row = rowOf(
+      parseEntry(entry({ title: 'a\ud83d', body: '\ude00b😀' })),
+    );
+    expect(row.title).toBe('a\ufffd');
+    expect(row.body).toBe('\ufffdb😀');
+  });
+
+  it('ignores a user_id sent by the client', () => {
+    const row = rowOf(parseEntry(entry({ user_id: OTHER })));
+    expect(row).not.toHaveProperty('userId');
+    expect(Object.values(row)).not.toContain(OTHER);
+  });
+
+  it('refuses a bad id and anything that is not an object, with no id to report', () => {
+    expect(refusedId(parseEntry({ id: 'abc' }))).toBeNull();
+    expect(refusedId(parseEntry({}))).toBeNull();
+    for (const raw of [null, 5, 'x', [], [ID]]) {
+      expect(refusedId(parseEntry(raw))).toBeNull();
+    }
+  });
+
+  it('names the id of a bad note in lower case', () => {
+    expect(refusedId(parseEntry({ id: ID.toUpperCase(), status: 'x' }))).toBe(
+      ID,
+    );
+  });
+});
+
+describe('parseMood', () => {
+  const mood = (extra: Record<string, unknown> = {}) => ({
+    id: ID,
+    name: 'Joy',
+    emoji: '😊',
+    ...extra,
+  });
+
+  it('takes a mood as the app sends it', () => {
+    expect(
+      rowOf(
+        parseMood({
+          ...mood(),
+          created_at: '2026-01-15T10:00:00.5Z',
+          client_updated_at: '2026-01-15T10:00:01Z',
+        }),
+      ),
+    ).toEqual({
+      id: ID,
+      name: 'Joy',
+      emoji: '😊',
+      createdAt: '2026-01-15T10:00:00.5Z',
+      clientUpdatedAt: '2026-01-15T10:00:01Z',
+    });
+  });
+
+  it('fills the times with now when they are not given', () => {
+    expect(rowOf(parseMood(mood())).createdAt).toMatch(/^\d{4}-.*Z$/);
+  });
+
+  describe('refuses the mood, naming its id', () => {
+    const bad: [string, Record<string, unknown>][] = [
+      ['a missing name', { name: undefined }],
+      ['a null name', { name: null }],
+      ['a name that is not text', { name: 5 }],
+      ['a name over 100 characters', { name: 'x'.repeat(101) }],
+      ['a NUL in the name', { name: 'a\0' }],
+      ['a missing emoji', { emoji: undefined }],
+      ['a null emoji', { emoji: null }],
+      ['an emoji over 32 characters', { emoji: '😊'.repeat(17) }],
+      ['a created_at that is a date only', { created_at: '2026-01-15' }],
+    ];
+    it.each(bad)('%s', (_name, extra) => {
+      expect(refusedId(parseMood(mood(extra)))).toBe(ID);
+    });
+  });
+
+  it('accepts the edges of the lengths, and an empty name', () => {
+    expect(rowOf(parseMood(mood({ name: 'x'.repeat(100) }))).name).toHaveLength(
+      100,
+    );
+    expect(
+      rowOf(parseMood(mood({ emoji: '😊'.repeat(16) }))).emoji,
+    ).toHaveLength(32);
+    expect(rowOf(parseMood(mood({ name: '' }))).name).toBe('');
+  });
+
+  it('ignores a user_id, and refuses what is not an object', () => {
+    expect(rowOf(parseMood(mood({ user_id: OTHER })))).not.toHaveProperty(
+      'userId',
+    );
+    expect(refusedId(parseMood(null))).toBeNull();
+    expect(
+      refusedId(parseMood({ id: 'abc', name: 'x', emoji: 'y' })),
+    ).toBeNull();
+  });
+});
+
+describe('parseTag', () => {
+  const tag = (extra: Record<string, unknown> = {}) => ({
+    id: ID,
+    name: 'Work',
+    ...extra,
+  });
+
+  it('takes a tag as the app sends it', () => {
+    expect(
+      rowOf(
+        parseTag({
+          ...tag(),
+          color_key: 'green',
+          created_at: '2026-01-15T10:00:00Z',
+          client_updated_at: '2026-01-15T10:00:01Z',
+        }),
+      ),
+    ).toEqual({
+      id: ID,
+      name: 'Work',
+      colorKey: 'green',
+      createdAt: '2026-01-15T10:00:00Z',
+      clientUpdatedAt: '2026-01-15T10:00:01Z',
+    });
+  });
+
+  it('uses violet when no colour is given', () => {
+    expect(rowOf(parseTag(tag())).colorKey).toBe('violet');
+  });
+
+  describe('refuses the tag, naming its id', () => {
+    const bad: [string, Record<string, unknown>][] = [
+      ['a missing name', { name: undefined }],
+      ['a null name', { name: null }],
+      ['a name over 100 characters', { name: 'x'.repeat(101) }],
+      ['a NUL in the name', { name: 'a\0' }],
+      ['a null colour (the column has a default)', { color_key: null }],
+      ['a colour that is not text', { color_key: 3 }],
+      ['a colour over 100 characters', { color_key: 'x'.repeat(101) }],
+      [
+        'a client_updated_at that is not a moment',
+        { client_updated_at: 'now' },
+      ],
+    ];
+    it.each(bad)('%s', (_name, extra) => {
+      expect(refusedId(parseTag(tag(extra)))).toBe(ID);
+    });
+  });
+
+  it('replaces half an emoji in the name with U+FFFD', () => {
+    expect(rowOf(parseTag(tag({ name: 'a\ud83d' }))).name).toBe('a\ufffd');
+  });
+
+  it('ignores a user_id, and refuses what is not an object', () => {
+    expect(rowOf(parseTag(tag({ user_id: OTHER })))).not.toHaveProperty(
+      'userId',
+    );
+    expect(refusedId(parseTag('x'))).toBeNull();
+    expect(refusedId(parseTag({ name: 'x' }))).toBeNull();
   });
 });

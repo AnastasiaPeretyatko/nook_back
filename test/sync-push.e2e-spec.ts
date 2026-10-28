@@ -162,20 +162,15 @@ describe('POST /sync/push', () => {
       ]);
     });
 
-    it('refuses lists the server does not keep yet, naming each row', async () => {
+    it('refuses the list the server does not keep yet (the cycle), naming each row', async () => {
       const res = await push(ann, {
-        moods: [{ id: T1 }],
-        tags: [{ id: T2 }],
-        entries: [{ id: T3 }, 5],
-        cycle_days: [{ date: '2026-01-01' }],
+        cycle_days: [{ id: T1 }, { date: '2026-01-01' }, 5],
         tasks: [{ id: T4 }],
       });
       expect(reasons(res)).toEqual(
         [
-          `moods:${T1}:unsupported_table`,
-          `tags:${T2}:unsupported_table`,
-          `diary_entries:${T3}:unsupported_table`,
-          `diary_entries:null:unsupported_table`,
+          `cycle_days:${T1}:unsupported_table`,
+          `cycle_days:null:unsupported_table`,
           `cycle_days:null:unsupported_table`,
         ].sort(),
       );
@@ -184,10 +179,10 @@ describe('POST /sync/push', () => {
 
     it('refuses a deletion in a table that is not supported', async () => {
       const res = await push(ann, {
-        deleted: [{ table: 'diary_entries', id: T1 }],
+        deleted: [{ table: 'cycle_days', id: T1 }],
       });
       expect(res.rejected).toEqual([
-        { table: 'diary_entries', id: T1, reason: 'unsupported_table' },
+        { table: 'cycle_days', id: T1, reason: 'unsupported_table' },
       ]);
     });
   });

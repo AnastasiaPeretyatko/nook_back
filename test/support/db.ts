@@ -34,12 +34,29 @@ export async function createTestApp(
   return app;
 }
 
-// Empties every table except TypeORM's own `migrations` bookkeeping.
+// Empties every table except TypeORM's own `migrations` bookkeeping. The eight starter moods
+// belong to nobody and come with the schema (a migration inserts them), so they are put back.
 export async function truncateAll(dataSource: DataSource) {
   const tables: { tablename: string }[] = await dataSource.query(
     `select tablename from pg_tables where schemaname = 'public' and tablename <> 'migrations'`,
   );
   if (tables.length === 0) return;
+  const hasMoods = tables.some((t) => t.tablename === 'note_moods');
+  const starters: unknown[] = hasMoods
+    ? await dataSource.query(
+        `select id, name, emoji, created_at, client_updated_at from note_moods where user_id is null`,
+      )
+    : [];
   const names = tables.map((t) => `"${t.tablename}"`).join(', ');
   await dataSource.query(`truncate ${names} restart identity cascade`);
+  if (starters.length > 0) {
+    await dataSource.query(
+      `insert into note_moods (id, user_id, name, emoji, created_at, client_updated_at)
+       select id, null, name, emoji, created_at, client_updated_at
+       from json_to_recordset($1::json) as r(
+         id uuid, name text, emoji text, created_at timestamptz, client_updated_at timestamptz
+       )`,
+      [JSON.stringify(starters)],
+    );
+  }
 }

@@ -45,6 +45,38 @@ export interface DeletedRow {
   id: string;
 }
 
+// The diary. `moodIds` / `tagIds` are the note's whole set of labels: a list replaces what the
+// server has (an empty list erases it); null means the row did not say, and nothing is touched.
+export interface EntryRow {
+  id: string;
+  title: string;
+  body: string;
+  coverImage: string | null;
+  images: string;
+  isFavorite: boolean;
+  status: string;
+  createdAt: string;
+  clientUpdatedAt: string;
+  moodIds: string[] | null;
+  tagIds: string[] | null;
+}
+
+export interface MoodRow {
+  id: string;
+  name: string;
+  emoji: string;
+  createdAt: string;
+  clientUpdatedAt: string;
+}
+
+export interface TagRow {
+  id: string;
+  name: string;
+  colorKey: string;
+  createdAt: string;
+  clientUpdatedAt: string;
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
 // UTC only, with the `Z`: Postgres reads a bare time in the server's zone.
@@ -88,6 +120,12 @@ const real: Check<number> = (v) =>
   typeof v === 'number' && Number.isFinite(v) ? v : fail();
 
 const bool: Check<boolean> = (v) => (typeof v === 'boolean' ? v : fail());
+
+// A list of ids (a note's moods or tags): at most `max`, each a uuid, lower-cased, no repeats.
+const uuidList =
+  (max: number): Check<string[]> =>
+  (v) =>
+    Array.isArray(v) && v.length <= max ? [...new Set(v.map(uuid))] : fail();
 
 const oneOf =
   (allowed: readonly string[]): Check<string> =>
@@ -205,6 +243,54 @@ export function parseTask(raw: unknown): RowResult<TaskRow> {
       clientUpdatedAt: def(f, 'client_updated_at', instant, now),
       groupId: opt(f, 'group_id', uuid),
       assigneeId: opt(f, 'assignee_id', uuid),
+    };
+  });
+}
+
+const ENTRY_STATUSES = ['draft', 'normal', 'archived'];
+const MAX_LABELS_PER_ENTRY = 100;
+
+export function parseEntry(raw: unknown): RowResult<EntryRow> {
+  return parse(raw, 'id', (f) => {
+    const now = new Date().toISOString();
+    return {
+      id: req(f, 'id', uuid),
+      title: def(f, 'title', text(1000), ''),
+      body: def(f, 'body', text(1_000_000), ''),
+      coverImage: opt(f, 'cover_image', text(2048)),
+      images: def(f, 'images', text(100_000), '[]'),
+      isFavorite: def(f, 'is_favorite', bool, false),
+      status: def(f, 'status', oneOf(ENTRY_STATUSES), 'normal'),
+      createdAt: def(f, 'created_at', instant, now),
+      clientUpdatedAt: def(f, 'client_updated_at', instant, now),
+      moodIds: opt(f, 'mood_ids', uuidList(MAX_LABELS_PER_ENTRY)),
+      tagIds: opt(f, 'tag_ids', uuidList(MAX_LABELS_PER_ENTRY)),
+    };
+  });
+}
+
+export function parseMood(raw: unknown): RowResult<MoodRow> {
+  return parse(raw, 'id', (f) => {
+    const now = new Date().toISOString();
+    return {
+      id: req(f, 'id', uuid),
+      name: req(f, 'name', text(100)),
+      emoji: req(f, 'emoji', text(32)),
+      createdAt: def(f, 'created_at', instant, now),
+      clientUpdatedAt: def(f, 'client_updated_at', instant, now),
+    };
+  });
+}
+
+export function parseTag(raw: unknown): RowResult<TagRow> {
+  return parse(raw, 'id', (f) => {
+    const now = new Date().toISOString();
+    return {
+      id: req(f, 'id', uuid),
+      name: req(f, 'name', text(100)),
+      colorKey: def(f, 'color_key', text(100), 'violet'),
+      createdAt: def(f, 'created_at', instant, now),
+      clientUpdatedAt: def(f, 'client_updated_at', instant, now),
     };
   });
 }

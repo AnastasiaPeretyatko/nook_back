@@ -5,6 +5,7 @@ export type RejectReason =
   | 'unknown_parent'
   | 'parent_cycle'
   | 'unknown_task'
+  | 'unknown_label'
   | 'groups_not_supported'
   | 'unsupported_table';
 
