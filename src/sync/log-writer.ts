@@ -5,13 +5,16 @@ import { LogRow } from './push-rows';
 import { Rejection } from './rejection';
 
 const FIND_TASKS = `
-  select id, user_id, deleted_at is not null as deleted
+  select id, user_id, group_id, assignee_id, deleted_at is not null as deleted,
+         group_id is not null and is_group_member(group_id, $2::uuid) as member
   from tasks where id = any($1::uuid[])
 `;
 
 // One statement for the whole batch, rows as one JSON value (see TaskWriter). The join is the
-// access rule written into the SQL itself: a mark lands only on a live task of the caller, even
-// if the check before it was fooled. On conflict only the content changes; the key is the row.
+// access rule written into the SQL itself: a mark lands only on a live task the caller may mark
+// (`can_mark_task`: their own personal task, or a task of a group they are in, and for them or
+// for everyone), even if the check before it was fooled. On conflict only the content changes;
+// the key is the row.
 const UPSERT = `
   insert into task_logs (
     task_id, user_id, date, completed, value, completed_at, client_updated_at
@@ -22,7 +25,8 @@ const UPSERT = `
     "taskId" uuid, date date, completed boolean, value double precision,
     "completedAt" timestamptz, "clientUpdatedAt" timestamptz
   )
-  join tasks t on t.id = r."taskId" and t.user_id = $2::uuid and t.deleted_at is null
+  join tasks t on t.id = r."taskId" and t.deleted_at is null
+    and can_mark_task(t.id, $2::uuid)
   on conflict (task_id, user_id, date) do update set
     completed = excluded.completed, value = excluded.value,
     completed_at = excluded.completed_at, client_updated_at = excluded.client_updated_at
@@ -31,7 +35,10 @@ const UPSERT = `
 interface TaskRowFound {
   id: string;
   user_id: string;
+  group_id: string | null;
+  assignee_id: string | null;
   deleted: boolean;
+  member: boolean;
 }
 
 @Injectable()
@@ -47,11 +54,15 @@ export class LogWriter {
 
     const found: TaskRowFound[] = await manager.query(FIND_TASKS, [
       [...new Set(rows.map((r) => r.taskId))],
+      userId,
     ]);
     const tasks: MarkableTask[] = found.map((t) => ({
       id: t.id,
       userId: t.user_id,
+      groupId: t.group_id,
+      assigneeId: t.assignee_id,
       deleted: t.deleted,
+      member: t.member,
     }));
 
     const { write, rejected } = planLogWrites(rows, userId, tasks);

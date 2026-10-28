@@ -105,6 +105,7 @@ describe('GET /sync/pull with the cycle', () => {
       expect(dates(res.cycle_days)).toEqual([dayN(15)]);
       expect(Object.keys(res).sort()).toEqual([
         'cycle_days',
+        'groups',
         'has_more',
         'logs',
         'next',

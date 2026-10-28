@@ -6,7 +6,8 @@ export type RejectReason =
   | 'parent_cycle'
   | 'unknown_task'
   | 'unknown_label'
-  | 'groups_not_supported'
+  | 'unknown_group'
+  | 'not_allowed'
   | 'unsupported_table';
 
 export interface Rejection {

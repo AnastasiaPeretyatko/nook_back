@@ -20,6 +20,7 @@ export interface PullBody {
   tags?: Row[];
   entries?: Row[];
   cycle_days?: Row[];
+  groups?: { groups: Row[]; members: Row[] };
 }
 
 // How the device talks to the server: the test supplies the two calls (already signed in).
@@ -54,6 +55,13 @@ export class Device {
   moods = new Map<string, Row>();
   // The cycle calendar, by day. There are no deletions: a taken-back mark is an empty day.
   cycleDays = new Map<string, Row>();
+  // The groups the account is in and the people in them: the last snapshot, whole. What is not
+  // in it any more is gone from the device, tasks and marks of it included.
+  groups = new Map<string, Row>();
+  members: Row[] = [];
+  // The marks of the other members on the tasks of the groups, by `task|user|day`. The device's
+  // own marks are in `logs`.
+  otherMarks = new Map<string, Row>();
   watermark: string | null = null;
   rejected: Rejected[] = [];
   pulls = 0;
@@ -73,7 +81,12 @@ export class Device {
   constructor(
     private readonly api: DeviceApi,
     private readonly clock: () => string,
-    private readonly options: { diary?: boolean; cycle?: boolean } = {},
+    private readonly options: {
+      diary?: boolean;
+      cycle?: boolean;
+      // Whose device it is; needed to tell one's own marks from the others' in a group.
+      userId?: string;
+    } = {},
   ) {}
 
   setDiary(on: boolean) {
@@ -116,6 +129,9 @@ export class Device {
 
   private dropTask(taskId: string) {
     this.tasks.delete(taskId);
+    for (const key of [...this.otherMarks.keys()]) {
+      if (key.startsWith(taskId)) this.otherMarks.delete(key);
+    }
     for (const key of [...this.logs.keys()]) {
       if (key.startsWith(taskId)) {
         this.logs.delete(key);
@@ -274,6 +290,7 @@ export class Device {
     const include = parts.length > 0 ? `&include=${parts.join(',')}` : '';
     // Overlap once, at the start; follow `next` as it is.
     let since = this.watermark ? withOverlap(this.watermark) : null;
+    let snapshot: PullBody['groups'];
     for (;;) {
       this.pulls += 1;
       const res = await this.api.pull(
@@ -285,11 +302,26 @@ export class Device {
       res.tags?.forEach((t) => this.mergeLabel('tags', t));
       res.entries?.forEach((e) => this.mergeNote(e));
       res.cycle_days?.forEach((d) => this.mergeDay(d));
+      snapshot = res.groups ?? snapshot;
       if (res.next) this.watermark = res.next;
       if (!res.has_more) break;
       since = res.next;
     }
     this.settleLinks();
+    if (snapshot) this.settleGroups(snapshot);
+  }
+
+  // The snapshot is the truth about groups: a group that is not in it is one the account has left
+  // (or was removed from, or that was deleted), and everything of it goes off the device.
+  private settleGroups(snapshot: NonNullable<PullBody['groups']>) {
+    this.groups = new Map(snapshot.groups.map((g) => [g.id as string, g]));
+    this.members = snapshot.members;
+    for (const [taskId, task] of [...this.tasks]) {
+      if (task.group_id && !this.groups.has(task.group_id as string)) {
+        this.dropTask(taskId);
+        this.dirtyTasks.delete(taskId);
+      }
+    }
   }
 
   // A note can come before the label it names (the pages are cut table by table) and an old copy
@@ -336,6 +368,12 @@ export class Device {
   private mergeLog(remote: Row) {
     // Nor do the marks of a task whose deletion waits to be sent.
     if (this.gone.has(`tasks|${remote.task_id as string}`)) return;
+    const { userId } = this.options;
+    if (userId && remote.user_id !== userId) {
+      const key = `${remote.task_id as string}|${remote.user_id as string}|${remote.date as string}`;
+      this.otherMarks.set(key, remote);
+      return;
+    }
     const key = `${remote.task_id as string}|${remote.date as string}`;
     if (this.takes(this.logs.get(key), this.dirtyLogs.has(key), remote)) {
       this.logs.set(key, remote);
@@ -396,6 +434,30 @@ export class Device {
         .map((l) => [l.task_id, l.date, l.completed ?? false, l.value ?? null])
         .sort(),
     };
+  }
+
+  // The groups as the device shows them, and the marks of the other members.
+  groupSnapshot() {
+    return {
+      groups: [...this.groups.values()]
+        .map((g) => [g.id, g.name, g.owner_id])
+        .sort(),
+      members: this.members
+        .map((m) => [m.group_id, m.user_id, m.display_name ?? null])
+        .sort(),
+    };
+  }
+
+  otherMarksSnapshot() {
+    return [...this.otherMarks.values()]
+      .map((l) => [
+        l.task_id,
+        l.user_id,
+        l.date,
+        l.completed ?? false,
+        l.value ?? null,
+      ])
+      .sort();
   }
 
   cycleSnapshot() {

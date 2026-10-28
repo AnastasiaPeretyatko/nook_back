@@ -119,6 +119,44 @@ describe('parseTask', () => {
     expect(Object.values(row)).not.toContain(OTHER);
   });
 
+  describe('a task of a group', () => {
+    const grouped = (extra: Record<string, unknown> = {}) =>
+      task({ group_id: OTHER, ...extra });
+
+    it('is a one-off task: a checkbox, counter or timer, with no repeat and no parent', () => {
+      for (const tracking_mode of ['checkbox', 'counter', 'timer']) {
+        expect(rowOf(parseTask(grouped({ tracking_mode })))).toMatchObject({
+          groupId: OTHER,
+        });
+      }
+      expect(rowOf(parseTask(grouped({ assignee_id: ID })))).toMatchObject({
+        groupId: OTHER,
+        assigneeId: ID,
+      });
+    });
+
+    it.each([
+      ['a repeat', { repeat_type: 'daily' }],
+      ['a parent', { parent_id: OTHER }],
+      ['the value mode', { tracking_mode: 'value' }],
+    ])('is refused with %s, naming its id', (_name, extra) => {
+      expect(refusedId(parseTask(grouped(extra)))).toBe(ID);
+    });
+
+    it('may repeat, have a parent and use the value mode when it is not in a group', () => {
+      expect(
+        rowOf(
+          parseTask(task({ repeat_type: 'weekly', tracking_mode: 'value' })),
+        ),
+      ).toMatchObject({ groupId: null });
+      expect(
+        rowOf(parseTask(task({ parent_id: OTHER, group_id: null }))),
+      ).toMatchObject({
+        parentId: OTHER,
+      });
+    });
+  });
+
   describe('refuses the row, naming its id', () => {
     const bad: [string, Record<string, unknown>][] = [
       ['an id that is not a uuid', { id: 'abc' }],

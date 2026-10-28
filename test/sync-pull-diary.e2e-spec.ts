@@ -111,6 +111,7 @@ describe('GET /sync/pull with the diary', () => {
       async (query) => {
         const res = await pull(ann, query);
         expect(Object.keys(res).sort()).toEqual([
+          'groups',
           'has_more',
           'logs',
           'next',
@@ -126,6 +127,7 @@ describe('GET /sync/pull with the diary', () => {
         const res = await pull(ann, query);
         expect(Object.keys(res).sort()).toEqual([
           'cycle_days',
+          'groups',
           'has_more',
           'logs',
           'next',
@@ -141,6 +143,7 @@ describe('GET /sync/pull with the diary', () => {
         const res = await pull(ann, query);
         expect(Object.keys(res).sort()).toEqual([
           'entries',
+          'groups',
           'has_more',
           'logs',
           'moods',

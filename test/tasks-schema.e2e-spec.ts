@@ -206,15 +206,35 @@ describe('Task tables', () => {
     it('refuses a mark of a user that does not exist', async () => {
       const user = await addUser();
       await addTask(user, UUID_A);
-      await expect(addLog(UUID_A, NOBODY)).rejects.toThrow(
-        /task_logs_user_id_fkey/,
+      // The trigger that skips marks nobody may make would swallow this one before the key looks.
+      await ds.query(
+        `alter table task_logs disable trigger task_logs_skip_unmarkable`,
       );
+      try {
+        await expect(addLog(UUID_A, NOBODY)).rejects.toThrow(
+          /task_logs_user_id_fkey/,
+        );
+      } finally {
+        await ds.query(
+          `alter table task_logs enable trigger task_logs_skip_unmarkable`,
+        );
+      }
     });
 
     it('keeps one mark per task, user and day', async () => {
       const ann = await addUser('ann@example.com');
       const bob = await addUser('bob@example.com');
-      await addTask(ann, UUID_A);
+      // A group task, so that both can mark it (a personal task takes only its owner's marks).
+      const [{ id: group }] = await ds.query(
+        `insert into groups (name, owner_id) values ('g', $1) returning id`,
+        [ann],
+      );
+      await ds.query(
+        `insert into group_members (group_id, user_id, role)
+         values ($1, $2, 'owner'), ($1, $3, 'member')`,
+        [group, ann, bob],
+      );
+      await addTask(ann, UUID_A, { group_id: group });
       await addLog(UUID_A, ann);
       await expect(addLog(UUID_A, ann)).rejects.toThrow(/task_logs_pkey/);
       // Another day, or another user on the same day, is a different mark.

@@ -25,7 +25,8 @@ export interface TaskRow {
   startDate: string | null;
   createdAt: string;
   clientUpdatedAt: string;
-  // Sent by the app; groups arrive in B5, until then the writer refuses a task that has a group.
+  // Sent by the app. The group of a stored task never changes: for an existing task the stored
+  // group counts and a different `group_id` here is ignored (see planTaskWrites).
   groupId: string | null;
   assigneeId: string | null;
 }
@@ -240,7 +241,7 @@ const TRACKING_MODES = ['checkbox', 'counter', 'timer', 'value'];
 export function parseTask(raw: unknown): RowResult<TaskRow> {
   return parse(raw, 'id', (f) => {
     const now = new Date().toISOString();
-    return {
+    const row = {
       id: req(f, 'id', uuid),
       parentId: opt(f, 'parent_id', uuid),
       title: def(f, 'title', text(1000), ''),
@@ -270,6 +271,17 @@ export function parseTask(raw: unknown): RowResult<TaskRow> {
       groupId: opt(f, 'group_id', uuid),
       assigneeId: opt(f, 'assignee_id', uuid),
     };
+    // A group task is a one-off task without subtasks, not in the "value" mode: the database
+    // refuses anything else (tasks_group_task_shape), and its error would roll the push back.
+    if (
+      row.groupId &&
+      (row.repeatType !== null ||
+        row.parentId !== null ||
+        row.trackingMode === 'value')
+    ) {
+      fail();
+    }
+    return row;
   });
 }
 

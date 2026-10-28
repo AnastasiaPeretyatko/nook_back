@@ -133,7 +133,7 @@ describe('POST /sync/push', () => {
         tasks: [
           { id: T1, title: 'Good' },
           { id: T2, status: 'done' }, // invalid row
-          { id: T3, group_id: id(50) }, // groups come later
+          { id: T3, group_id: id(50) }, // a group that is not there
           { id: T4, parent_id: id(77) }, // parent nowhere
           null, // not even an object
         ],
@@ -147,7 +147,7 @@ describe('POST /sync/push', () => {
       expect(res.rejected).toEqual(
         expect.arrayContaining([
           { table: 'tasks', id: T2, reason: 'invalid_row' },
-          { table: 'tasks', id: T3, reason: 'groups_not_supported' },
+          { table: 'tasks', id: T3, reason: 'unknown_group' },
           { table: 'tasks', id: T4, reason: 'unknown_parent' },
           { table: 'tasks', id: null, reason: 'invalid_row' },
           { table: 'task_logs', id: T1, reason: 'invalid_row' },

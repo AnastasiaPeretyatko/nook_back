@@ -7,12 +7,14 @@ import {
   ManyToOne,
   PrimaryColumn,
 } from 'typeorm';
+import { Group } from '../groups/group.entity';
 import { User } from '../users/user.entity';
 
 // The schema itself lives in the migration (checks, triggers, deferred key included); this class only maps it.
 @Entity('tasks')
 @Index('tasks_user_updated_idx', ['userId', 'updatedAt'])
 @Index('tasks_parent_id_idx', ['parentId'])
+@Index('tasks_group_updated_idx', ['groupId', 'updatedAt'])
 @Check('tasks_status_check', "status in ('active', 'paused', 'archived')")
 @Check(
   'tasks_repeat_type_check',
@@ -21,6 +23,14 @@ import { User } from '../users/user.entity';
 @Check(
   'tasks_tracking_mode_check',
   "tracking_mode in ('checkbox', 'counter', 'timer', 'value')",
+)
+@Check(
+  'tasks_group_task_shape',
+  "group_id is null or (repeat_type is null and parent_id is null and tracking_mode <> 'value')",
+)
+@Check(
+  'tasks_assignee_needs_group',
+  'assignee_id is null or group_id is not null',
 )
 export class Task {
   // Minted on the device that created the task; never changes.
@@ -54,6 +64,30 @@ export class Task {
     foreignKeyConstraintName: 'tasks_parent_id_fkey',
   })
   parent: Task | null;
+
+  // The group this task is shared in; null for a personal task. Fixed at creation (a trigger
+  // keeps it). Only a one-off task can be in a group (see tasks_group_task_shape).
+  @Column({ name: 'group_id', type: 'uuid', nullable: true })
+  groupId: string | null;
+
+  @ManyToOne(() => Group, { onDelete: 'CASCADE' })
+  @JoinColumn({
+    name: 'group_id',
+    foreignKeyConstraintName: 'tasks_group_id_fkey',
+  })
+  group: Group | null;
+
+  // Who the task is for; null means for everyone. Only inside a group, and only a member (a
+  // trigger empties it otherwise). `user_id` above is the author in a group task.
+  @Column({ name: 'assignee_id', type: 'uuid', nullable: true })
+  assigneeId: string | null;
+
+  @ManyToOne(() => User, { onDelete: 'SET NULL' })
+  @JoinColumn({
+    name: 'assignee_id',
+    foreignKeyConstraintName: 'tasks_assignee_id_fkey',
+  })
+  assignee: User | null;
 
   @Column({ type: 'text', default: '' })
   title: string;

@@ -4,12 +4,25 @@ import { DEFAULT_PULL_LIMIT, SyncPullQuery } from './dto/sync-pull.query';
 
 type Rows = Record<string, unknown>[];
 
+// The groups the caller is in now, whole, every time (see GROUPS_SQL).
+export interface GroupsSnapshot {
+  groups: { id: string; name: string; owner_id: string }[];
+  members: {
+    group_id: string;
+    user_id: string;
+    display_name: string | null;
+    avatar_url: string | null;
+  }[];
+}
+
 export interface PullResult {
   // The time to ask from next. Null only when there are no rows at all and no `since` was given.
   next: string | null;
   has_more: boolean;
   tasks: Rows;
   logs: Rows;
+  // Always. Not paged and not part of `next` / `has_more`.
+  groups: GroupsSnapshot;
   // Only with `include=diary`.
   moods?: Rows;
   tags?: Rows;
@@ -25,15 +38,15 @@ const iso = (column: string) =>
 // A day leaves as plain 'YYYY-MM-DD' (the pg driver would turn a `date` into a JS Date).
 const day = (column: string) => `to_char(${column}, 'YYYY-MM-DD')`;
 
-// The keys of `taskToRow` plus user_id, updated_at, deleted_at. group_id and assignee_id are in
-// the shape already and stay null until groups (B5).
+// The keys of `taskToRow` plus user_id, updated_at, deleted_at. In a group task `user_id` is the
+// author; `group_id` and `assignee_id` are null for a personal task.
 const TASK_COLUMNS = `
   id, user_id, parent_id, title, description, status, repeat_type, repeat_interval,
   repeat_days_mask, tracking_mode, target_duration_minutes, target_value, icon_key, color_key,
   scheduled_time_minutes, end_time_minutes, ${day('start_date')} as start_date,
   ${iso('created_at')} as created_at, ${iso('client_updated_at')} as client_updated_at,
   ${iso('updated_at')} as updated_at, ${iso('deleted_at')} as deleted_at,
-  null::uuid as group_id, null::uuid as assignee_id`;
+  group_id, assignee_id`;
 
 const LOG_COLUMNS = `
   task_id, user_id, ${day('date')} as date, completed, value,
@@ -69,27 +82,40 @@ const CYCLE_COLUMNS = `
   ${iso('client_updated_at')} as client_updated_at, ${iso('updated_at')} as updated_at`;
 
 // One kind of rows in the answer. `owner` picks the caller's rows; the starter moods have no
-// owner and are everybody's. `maxPage` keeps a page of heavy rows (notes) small, whatever the
+// owner and are everybody's. `alsoOwner` is a second, never overlapping way for a row to be the
+// caller's (the group's rows): it is read as a separate branch, because an `or` in one condition
+// sends the planner to read the whole table instead of following an index. `maxPage` keeps a page of heavy rows (notes) small, whatever the
 // app asks for: has_more makes up for it.
 interface Part {
   key: 'tasks' | 'logs' | 'moods' | 'tags' | 'entries' | 'cycle_days';
   table: string;
   columns: string;
   owner: string;
+  alsoOwner?: string;
   maxPage?: number;
 }
 
+// The groups the caller is in now. Whoever has left (or was removed, or the group is deleted)
+// sees nothing of the group's rows from then on, the ones they wrote included.
+const MY_GROUPS = `(select group_id from group_members where user_id = $1 and deleted_at is null)`;
+
+// Own personal tasks, and every task of the caller's groups whoever wrote it.
 const TASKS_PART: Part = {
   key: 'tasks',
   table: 'tasks',
   columns: TASK_COLUMNS,
-  owner: 'user_id = $1',
+  owner: `user_id = $1 and group_id is null`,
+  alsoOwner: `group_id in ${MY_GROUPS}`,
 };
+// Own marks on personal tasks, and the marks of every member on the tasks of the caller's groups
+// (that is the "2 of 3"). The caller's old marks on a group they have left stay behind with it.
 const LOGS_PART: Part = {
   key: 'logs',
   table: 'task_logs',
   columns: LOG_COLUMNS,
-  owner: 'user_id = $1',
+  owner: `user_id = $1
+          and task_id in (select id from tasks where user_id = $1 and group_id is null)`,
+  alsoOwner: `task_id in (select id from tasks where group_id in ${MY_GROUPS})`,
 };
 const DIARY_PARTS: Part[] = [
   {
@@ -125,10 +151,17 @@ const CYCLE_PART: Part = {
 // rows that share it are never split between two pages (the next page asks for "strictly
 // newer" and would lose the rest). `more` says whether anything lies beyond. `not materialized`
 // lets every use of `page` follow the (user_id, updated_at) index instead of reading it all first.
-const pageQuery = ({ table, columns, owner }: Part) => `
+const pageQuery = ({ table, columns, owner, alsoOwner }: Part) => `
   with page as not materialized (
     select * from ${table}
     where ${owner} and ($2::timestamptz is null or updated_at > $2::timestamptz)
+    ${
+      alsoOwner
+        ? `union all
+    select * from ${table}
+    where ${alsoOwner} and ($2::timestamptz is null or updated_at > $2::timestamptz)`
+        : ''
+    }
   ), cut as (
     select updated_at from page order by updated_at offset ($3::int - 1) limit 1
   )
@@ -137,6 +170,21 @@ const pageQuery = ({ table, columns, owner }: Part) => `
   from page
   where page.updated_at <= coalesce((select updated_at from cut), 'infinity'::timestamptz)
   order by page.updated_at
+`;
+
+// The caller's groups and the people in them, in one round trip (the database can be far away).
+// Only groups the caller is a member of *now*, and only the members who are in them now: a group
+// that is gone from the answer is how a phone learns it left, was removed, or the group was
+// deleted. Names come from `profiles` (none yet = null). The invite code is not here.
+const GROUPS_SQL = `
+  select g.id, g.name, g.owner_id, m.user_id, p.display_name, p.avatar_url
+  from groups g
+  join group_members me
+    on me.group_id = g.id and me.user_id = $1 and me.deleted_at is null
+  join group_members m on m.group_id = g.id and m.deleted_at is null
+  left join profiles p on p.user_id = m.user_id
+  where g.deleted_at is null
+  order by g.created_at, g.id, m.joined_at, m.user_id
 `;
 
 interface Page {
@@ -164,9 +212,10 @@ export class SyncPullService {
     ];
 
     // All reads at once, to spare the wait on a far-away database.
-    const pages = await Promise.all(
-      parts.map((part) => this.page(part, userId, since, limit)),
-    );
+    const [pages, groups] = await Promise.all([
+      Promise.all(parts.map((part) => this.page(part, userId, since, limit))),
+      this.groups(userId),
+    ]);
 
     const truncated = pages.filter((p) => p.truncated);
     // Cut short: continue from the earliest of the cut tables' last times, so none of them
@@ -188,11 +237,36 @@ export class SyncPullService {
       has_more: truncated.length > 0,
       tasks: [],
       logs: [],
+      groups,
     };
     parts.forEach((part, i) => {
       result[part.key] = pages[i].rows;
     });
     return result;
+  }
+
+  private async groups(userId: string): Promise<GroupsSnapshot> {
+    const found: {
+      id: string;
+      name: string;
+      owner_id: string;
+      user_id: string;
+      display_name: string | null;
+      avatar_url: string | null;
+    }[] = await this.dataSource.query(GROUPS_SQL, [userId]);
+    const groups = new Map<string, GroupsSnapshot['groups'][number]>();
+    for (const r of found) {
+      groups.set(r.id, { id: r.id, name: r.name, owner_id: r.owner_id });
+    }
+    return {
+      groups: [...groups.values()],
+      members: found.map((r) => ({
+        group_id: r.id,
+        user_id: r.user_id,
+        display_name: r.display_name,
+        avatar_url: r.avatar_url,
+      })),
+    };
   }
 
   private async page(

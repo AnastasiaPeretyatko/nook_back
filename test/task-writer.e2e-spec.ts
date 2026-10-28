@@ -323,14 +323,14 @@ describe('TaskWriter', () => {
     });
   });
 
-  describe('groups', () => {
-    it('refuses a group task for now, and writes the rest', async () => {
+  describe('a group that is not there', () => {
+    it('refuses the task as unknown_group, and writes the rest', async () => {
       const rejected = await write(ann, [
         task({ id: A, group_id: id(50) }),
         task({ id: B }),
       ]);
       expect(rejected).toEqual([
-        { table: 'tasks', id: A, reason: 'groups_not_supported' },
+        { table: 'tasks', id: A, reason: 'unknown_group' },
       ]);
       expect(await count()).toBe(1);
     });
@@ -387,7 +387,7 @@ describe('TaskWriter', () => {
       ]);
       expect(rejected.map((r) => `${r.id}:${r.reason}`).sort()).toEqual([
         `${B}:unknown_parent`,
-        `${C}:groups_not_supported`,
+        `${C}:unknown_group`,
       ]);
       const rows = await ds.query(`select id from tasks order by id`);
       expect(rows.map((r: { id: string }) => r.id)).toEqual([A, D]);

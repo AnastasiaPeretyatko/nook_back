@@ -10,6 +10,7 @@ import { validateEnv } from './config/env.validation';
 import { CycleModule } from './cycle/cycle.module';
 import { DatabaseModule } from './database/database.module';
 import { DiaryModule } from './diary/diary.module';
+import { GroupsModule } from './groups/groups.module';
 import { HealthModule } from './health/health.module';
 import { SyncModule } from './sync/sync.module';
 import { TasksModule } from './tasks/tasks.module';
@@ -37,6 +38,7 @@ import { UsersModule } from './users/users.module';
     TasksModule,
     DiaryModule,
     CycleModule,
+    GroupsModule,
     SyncModule,
   ],
   providers: [

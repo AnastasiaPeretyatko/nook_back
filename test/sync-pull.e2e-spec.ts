@@ -82,12 +82,14 @@ describe('GET /sync/pull', () => {
       has_more: false,
       tasks: [],
       logs: [],
+      groups: { groups: [], members: [] },
     });
   });
 
   it('answers only with tasks and marks unless the diary or the cycle is asked for', async () => {
     const res = await pull(ann, '?include=tasks');
     expect(Object.keys(res).sort()).toEqual([
+      'groups',
       'has_more',
       'logs',
       'next',
@@ -241,6 +243,7 @@ describe('GET /sync/pull', () => {
         has_more: false,
         tasks: [],
         logs: [],
+        groups: { groups: [], members: [] },
       });
     });
 
@@ -289,6 +292,7 @@ describe('GET /sync/pull', () => {
         has_more: false,
         tasks: [],
         logs: [],
+        groups: { groups: [], members: [] },
       });
     });
 
