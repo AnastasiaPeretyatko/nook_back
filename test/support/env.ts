@@ -10,3 +10,6 @@ process.env.JWT_SECRET = 'test-secret-test-secret-test-secret-0123456789';
 delete process.env.GOOGLE_CLIENT_IDS;
 // The request limiter would block the many quick calls tests make; its own test turns it on.
 process.env.RATE_LIMIT = 'off';
+// The owner's real Firebase key may be in .env. Tests must never be able to reach Google, so the
+// variable is set (empty counts as not set), and dotenv will not fill it in.
+process.env.FIREBASE_SERVICE_ACCOUNT = '';

@@ -9,9 +9,11 @@ import { AuthModule } from './auth/auth.module';
 import { validateEnv } from './config/env.validation';
 import { CycleModule } from './cycle/cycle.module';
 import { DatabaseModule } from './database/database.module';
+import { DevicesModule } from './devices/devices.module';
 import { DiaryModule } from './diary/diary.module';
 import { GroupsModule } from './groups/groups.module';
 import { HealthModule } from './health/health.module';
+import { PushModule } from './push/push.module';
 import { RealtimeGatewayModule } from './realtime/realtime-gateway.module';
 import { SyncModule } from './sync/sync.module';
 import { TasksModule } from './tasks/tasks.module';
@@ -39,6 +41,8 @@ import { UsersModule } from './users/users.module';
     TasksModule,
     DiaryModule,
     CycleModule,
+    DevicesModule,
+    PushModule,
     GroupsModule,
     RealtimeGatewayModule,
     SyncModule,

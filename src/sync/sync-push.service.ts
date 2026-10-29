@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { PushEvent } from '../push/plan-push';
+import { PushService } from '../push/push.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { SyncPushDto } from './dto/sync-push.dto';
 import { CycleWriter } from './cycle-writer';
@@ -39,6 +41,7 @@ export class SyncPushService {
     private readonly cycle: CycleWriter,
     private readonly deletions: DeletionWriter,
     private readonly realtime: RealtimeService,
+    private readonly pushes: PushService,
   ) {}
 
   // Checks every row on its own, then writes moods, tags, notes (with their links), tasks,
@@ -87,14 +90,16 @@ export class SyncPushService {
       cycleRows,
       deletedRows,
     ];
+    // What happened to group tasks, as the writers saw it; told to people's phones after the commit.
+    const events: PushEvent[] = [];
     if (lists.some((list) => list.length > 0)) {
       await this.dataSource.transaction(async (manager) => {
         rejected.push(
           ...(await this.labels.writeMoods(manager, userId, moodRows)),
           ...(await this.labels.writeTags(manager, userId, tagRows)),
           ...(await this.entries.write(manager, userId, entryRows)),
-          ...(await this.tasks.write(manager, userId, taskRows)),
-          ...(await this.logs.write(manager, userId, logRows)),
+          ...(await this.tasks.write(manager, userId, taskRows, events)),
+          ...(await this.logs.write(manager, userId, logRows, events)),
         );
         // Refuses nothing: the rows were checked above and a day cannot be someone else's.
         await this.cycle.write(manager, userId, cycleRows);
@@ -121,6 +126,18 @@ export class SyncPushService {
         taskId: r.table === 'tasks' ? r.id : undefined,
       })),
     ]);
+
+    // A task made (or ticked) and deleted by the same push is not news: the deletions come last in
+    // the transaction, so the writers did not see them.
+    const refused = new Set(
+      rejected.filter((r) => r.table === 'tasks').map((r) => r.id),
+    );
+    const deletedHere = new Set(
+      deletedRows
+        .filter((r) => r.table === 'tasks' && !refused.has(r.id))
+        .map((r) => r.id),
+    );
+    this.pushes.notify(events.filter((e) => !deletedHere.has(e.task.id)));
 
     return { rejected, server_time: new Date().toISOString() };
   }

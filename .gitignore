@@ -35,6 +35,9 @@ lerna-debug.log*
 !.vscode/launch.json
 !.vscode/extensions.json
 
+# Firebase service account keys (private keys; they go to the host's variables as base64)
+*firebase-adminsdk*.json
+
 # dotenv environment variable files
 .env
 .env.development.local

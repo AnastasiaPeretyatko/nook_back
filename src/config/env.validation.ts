@@ -11,6 +11,7 @@ import {
   MinLength,
   validateSync,
 } from 'class-validator';
+import { parseServiceAccount } from './firebase-account';
 
 export class EnvironmentVariables {
   @IsIn(['development', 'production', 'test'])
@@ -51,6 +52,13 @@ export class EnvironmentVariables {
   @IsString({ each: true })
   GOOGLE_CLIENT_IDS?: string[];
 
+  // The Firebase service account key file (JSON), encoded as base64 (`base64 -w0 key.json`). It lets
+  // the server send push notifications. Not set = push is off and the rest works. A secret: only in
+  // .env and the host's variables, never in the repository.
+  @IsOptional()
+  @IsString()
+  FIREBASE_SERVICE_ACCOUNT?: string;
+
   // How many reverse proxies stand between the internet and this server (Render: set after
   // checking, see MEMORY). Request limits are counted per client address, and the address
   // is only read from X-Forwarded-For when this is above 0. Too high lets a client forge it.
@@ -74,6 +82,18 @@ export function validateEnv(config: Record<string, unknown>) {
       .map((e) => Object.values(e.constraints ?? {}).join('; '))
       .join('\n  ');
     throw new Error(`Invalid environment variables:\n  ${details}`);
+  }
+  // Set but broken must stop the start: otherwise push would silently never work.
+  if (env.FIREBASE_SERVICE_ACCOUNT?.trim()) {
+    try {
+      parseServiceAccount(env.FIREBASE_SERVICE_ACCOUNT);
+    } catch (error) {
+      throw new Error(
+        `Invalid environment variables:\n  FIREBASE_SERVICE_ACCOUNT ${(error as Error).message}`,
+      );
+    }
+  } else {
+    env.FIREBASE_SERVICE_ACCOUNT = undefined; // blank counts as not set
   }
   // pg turns TLS on only through ?sslmode= in the URL; without it the link would be plain text.
   if (

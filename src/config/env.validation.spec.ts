@@ -6,6 +6,16 @@ const valid = {
   JWT_SECRET: 'x'.repeat(32),
 };
 
+const key = {
+  type: 'service_account',
+  project_id: 'nook-test',
+  client_email: 'firebase-adminsdk-x@nook-test.iam.gserviceaccount.com',
+  private_key:
+    '-----BEGIN PRIVATE KEY-----\nTOP-SECRET-BYTES\n-----END PRIVATE KEY-----\n',
+};
+const encode = (value: unknown) =>
+  Buffer.from(JSON.stringify(value)).toString('base64');
+
 describe('validateEnv', () => {
   it('applies defaults for NODE_ENV and PORT', () => {
     const env = validateEnv(valid);
@@ -112,5 +122,85 @@ describe('validateEnv', () => {
     expect(() =>
       validateEnv({ ...valid, NODE_ENV: 'production', RATE_LIMIT: 'off' }),
     ).toThrow(/RATE_LIMIT=off/);
+  });
+
+  describe('FIREBASE_SERVICE_ACCOUNT', () => {
+    const withKey = (value: unknown) =>
+      validateEnv({ ...valid, FIREBASE_SERVICE_ACCOUNT: value });
+
+    it('is optional: not set or blank means push is off', () => {
+      expect(validateEnv(valid).FIREBASE_SERVICE_ACCOUNT).toBeUndefined();
+      expect(withKey('').FIREBASE_SERVICE_ACCOUNT).toBeUndefined();
+      expect(withKey('  \n').FIREBASE_SERVICE_ACCOUNT).toBeUndefined();
+    });
+
+    it('accepts a key file encoded as base64', () => {
+      expect(withKey(encode(key)).FIREBASE_SERVICE_ACCOUNT).toBe(encode(key));
+    });
+
+    it('tolerates a trailing newline from the shell', () => {
+      expect(() => withKey(`${encode(key)}\n`)).not.toThrow();
+    });
+
+    it('refuses the JSON itself and says what to do', () => {
+      expect(() => withKey(JSON.stringify(key))).toThrow(
+        /JSON itself.*base64 -w0/,
+      );
+    });
+
+    it.each([
+      ['text that is not base64 of JSON', 'definitely not a key'],
+      [
+        'base64 of text that is not JSON',
+        Buffer.from('hello').toString('base64'),
+      ],
+      ['base64 of JSON null', encode(null)],
+      ['a JSON list', encode([key])],
+      ['a key of another type', encode({ ...key, type: 'authorized_user' })],
+      ['a key without project_id', encode({ ...key, project_id: undefined })],
+      [
+        'a key with an empty client_email',
+        encode({ ...key, client_email: '' }),
+      ],
+      ['a key without private_key', encode({ ...key, private_key: undefined })],
+      [
+        'a private_key that is not a PEM',
+        encode({ ...key, private_key: 'abc' }),
+      ],
+      ['a number in project_id', encode({ ...key, project_id: 5 })],
+    ])('stops the start on %s', (_name, value) => {
+      expect(() => withKey(value)).toThrow(/FIREBASE_SERVICE_ACCOUNT/);
+    });
+
+    it.each([
+      'TOP-SECRET-BYTES but not base64 of JSON',
+      JSON.stringify(key),
+      Buffer.from('TOP-SECRET-BYTES').toString('base64'),
+      encode({ ...key, type: 'authorized_user' }),
+    ])('never repeats what was given in the error (%#)', (given) => {
+      let message = '';
+      try {
+        withKey(given);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toMatch(/FIREBASE_SERVICE_ACCOUNT/);
+      expect(message).not.toContain('TOP-SECRET-BYTES');
+      expect(message).not.toContain(given);
+    });
+
+    it('never repeats the key in the error', () => {
+      const broken = encode({ ...key, project_id: '' });
+      let message = '';
+      try {
+        withKey(broken);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toMatch(/FIREBASE_SERVICE_ACCOUNT/);
+      for (const secret of ['TOP-SECRET-BYTES', 'BEGIN PRIVATE', broken]) {
+        expect(message).not.toContain(secret);
+      }
+    });
   });
 });
