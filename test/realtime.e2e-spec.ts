@@ -114,7 +114,8 @@ describe('WebSocket /ws', () => {
     ])('closes with 4401 for %s', async (_name, query) => {
       const c = connect(query());
       expect(await c.closed).toBe(4401);
-      expect(c.messages).toEqual([]);
+      // The message comes first: it is what survives a proxy that eats the close.
+      expect(c.messages).toEqual(['{"t":"unauthorized"}']);
     });
 
     it('does not register a refused connection', async () => {
@@ -333,7 +334,7 @@ describe('WebSocket /ws', () => {
       jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 2 * 3_600_000);
       realtime.ring([ann.id]);
       expect(await old.closed).toBe(4401);
-      expect(old.messages).toEqual([]);
+      expect(old.messages).toEqual(['{"t":"unauthorized"}']); // not "changed"
       expect(realtime.count(ann.id)).toBe(0);
     });
 
@@ -345,7 +346,7 @@ describe('WebSocket /ws', () => {
       jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 2 * 3_600_000);
       old.socket.send('{"t":"ping"}');
       expect(await old.closed).toBe(4401);
-      expect(old.messages).toEqual([]);
+      expect(old.messages).toEqual(['{"t":"unauthorized"}']); // not "pong"
     });
 
     it('a connection that opens with a fresh token is not affected by an old one expiring', async () => {

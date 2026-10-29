@@ -21,6 +21,7 @@ export async function nextMessage(client: Client, already = 0) {
 }
 
 export const CHANGED = '{"t":"changed"}';
+export const UNAUTHORIZED = '{"t":"unauthorized"}';
 
 // Opens real sockets to a listening test app. `closeAll` goes in `afterEach`.
 export async function listenForSockets(app: INestApplication) {

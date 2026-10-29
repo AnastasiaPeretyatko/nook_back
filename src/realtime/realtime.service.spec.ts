@@ -130,7 +130,8 @@ describe('RealtimeService', () => {
       const fresh = join('ann');
       service.ring(['ann']);
       expect(old.closedWith).toBe(4401);
-      expect(old.sent).toEqual([]);
+      // Told by a message too (a close alone does not get through Render's proxy), never rung.
+      expect(old.sent).toEqual(['{"t":"unauthorized"}']);
       expect(fresh.sent).toHaveLength(1);
       expect(fresh.closedWith).toBeUndefined();
       expect(service.count('ann')).toBe(1);
@@ -162,7 +163,7 @@ describe('RealtimeService', () => {
       const socket = join('ann', { expiresAt: Date.now() + 50 });
       jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 100);
       service.pong('ann', socket as unknown as WebSocket);
-      expect(socket.sent).toEqual([]);
+      expect(socket.sent).toEqual(['{"t":"unauthorized"}']); // no pong
       expect(socket.closedWith).toBe(4401);
       expect(service.count('ann')).toBe(0);
     });

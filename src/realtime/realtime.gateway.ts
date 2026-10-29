@@ -3,7 +3,7 @@ import { IncomingMessage } from 'http';
 import { RawData, WebSocket } from 'ws';
 import { TokenService } from '../auth/token.service';
 import { parseDeviceId } from './device-id';
-import { CLOSE_UNAUTHORIZED, RealtimeService } from './realtime.service';
+import { RealtimeService } from './realtime.service';
 
 // Bigger frames are refused by `ws` itself (it closes with 1009).
 const MAX_MESSAGE_BYTES = 1024;
@@ -33,7 +33,7 @@ export class RealtimeGateway implements OnGatewayConnection {
     const token = params.get('token');
     // Signature only, no database: connecting must not wake Neon.
     const session = token ? await this.tokens.readAccessToken(token) : null;
-    if (!session) return socket.close(CLOSE_UNAUTHORIZED);
+    if (!session) return this.realtime.refuse(socket);
     if (socket.readyState !== WebSocket.OPEN) return; // left while we were checking
     const { userId, expiresAt } = session;
     this.realtime.add(userId, socket, {

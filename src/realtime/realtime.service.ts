@@ -11,12 +11,13 @@ export const IDLE_LIMIT_MS = 10 * 60 * 1000;
 const SWEEP_EVERY_MS = 5 * 60 * 1000;
 
 // Close codes of our own side; 4401 is in the contract (bad or expired token).
-export const CLOSE_UNAUTHORIZED = 4401;
+const CLOSE_UNAUTHORIZED = 4401;
 const CLOSE_GOING_AWAY = 1001;
 const CLOSE_POLICY = 1008;
 
 const CHANGED = '{"t":"changed"}';
 const PONG = '{"t":"pong"}';
+const UNAUTHORIZED = '{"t":"unauthorized"}';
 
 interface Connection {
   lastSeen: number;
@@ -115,8 +116,17 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
   ) {
     if (expiresAt > Date.now()) return false;
     this.remove(userId, socket);
-    this.safely(() => socket.close(CLOSE_UNAUTHORIZED));
+    this.refuse(socket);
     return true;
+  }
+
+  // "Your token is bad or over." Told twice: by a message and by close code 4401. Behind Render's
+  // proxy a close the server starts never reaches the client (it sees 1006 about 20 s later), but
+  // a message does, so the message is what the phone acts on: it closes, renews the token and
+  // connects again.
+  refuse(socket: WebSocket) {
+    this.send(socket, UNAUTHORIZED);
+    this.safely(() => socket.close(CLOSE_UNAUTHORIZED));
   }
 
   // One broken connection must not stop the rest, so every failure stays here. The log has

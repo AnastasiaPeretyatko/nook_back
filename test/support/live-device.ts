@@ -1,13 +1,16 @@
 import { Device } from './fake-device';
-import { CHANGED, Client, Sockets, quiet } from './ws-client';
+import { CHANGED, Client, Sockets, UNAUTHORIZED, quiet } from './ws-client';
 
 // The app with a WebSocket, as the plan for the app describes it (A7): after EVERY connection one
-// pull; on "changed" one sync (pull, then push of what is dirty); on 4401 a new token and a new
-// connection; after a break (the server restarted) a new connection. The debounce of 1 second is
+// pull; on "changed" one sync (pull, then push of what is dirty); on "unauthorized" (the message
+// the server sends before it closes with 4401; Render's proxy loses the close, not the message)
+// it closes its own side, gets a new token and connects again; after a break (the server
+// restarted) a new connection. The debounce of 1 second is
 // left out: the tests count one ring as one sync.
 export class LiveDevice {
-  // Rings heard, connections made, and closes seen with their codes.
+  // Rings heard, "unauthorized" heard, connections made, and closes seen with their codes.
   rings = 0;
+  unauthorized = 0;
   connects = 0;
   closes: number[] = [];
   client?: Client;
@@ -28,30 +31,37 @@ export class LiveDevice {
   async connect(): Promise<void> {
     this.stopped = false;
     const client = await this.sockets.join(this.token, this.name);
-    if (client.socket.readyState !== client.socket.OPEN) {
-      // Refused (or already dropped). Only a bad token is the app's business: get a new one.
-      const code = await client.closed;
-      this.closes.push(code);
-      if (code !== 4401) throw new Error(`closed with ${code} on connecting`);
+    if (client.messages.includes(UNAUTHORIZED)) {
+      // Refused. Only a bad token is the app's business: close, get a new one, connect again.
+      this.unauthorized += 1;
+      client.socket.terminate();
       this.token = await this.freshToken();
       return this.connect();
+    }
+    if (client.socket.readyState !== client.socket.OPEN) {
+      throw new Error(`closed with ${await client.closed} on connecting`);
     }
     this.connects += 1;
     this.client = client;
     client.socket.on('message', (raw) => {
-      if ((raw as Buffer).toString() !== CHANGED) return;
-      this.rings += 1;
-      this.queue(() => this.device.sync());
+      const message = (raw as Buffer).toString();
+      if (message === CHANGED) {
+        this.rings += 1;
+        this.queue(() => this.device.sync());
+      } else if (message === UNAUTHORIZED) {
+        this.unauthorized += 1;
+        this.client = undefined; // this socket's close is no news any more
+        client.socket.terminate();
+        this.queue(async () => {
+          this.token = await this.freshToken();
+          await this.connect();
+        });
+      }
     });
     void client.closed.then((code) => {
       if (this.stopped || this.client !== client) return;
       this.closes.push(code);
-      if (code === 4401 || this.autoReconnect) {
-        this.queue(async () => {
-          if (code === 4401) this.token = await this.freshToken();
-          await this.connect();
-        });
-      }
+      if (this.autoReconnect) this.queue(() => this.connect());
     });
     await this.device.sync();
   }

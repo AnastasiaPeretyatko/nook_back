@@ -530,7 +530,7 @@ describe('Realtime (the "done when" list of stage B6)', () => {
       });
       const c = listen.connect(`?token=${old}`);
       expect(await c.closed).toBe(4401);
-      expect(c.messages).toEqual([]);
+      expect(c.messages).toEqual(['{"t":"unauthorized"}']);
     });
 
     it('a connection whose token runs out is closed with 4401 instead of rung; the phone gets a new token, connects, and pulls once', async () => {
@@ -545,10 +545,23 @@ describe('Realtime (the "done when" list of stage B6)', () => {
       await writer.device.sync();
 
       await tablet.waitUntil(() => tablet.connects === 2);
-      expect(tablet.closes).toContain(4401);
+      expect(tablet.unauthorized).toBe(1);
       expect(tablet.rings).toBe(0); // it was told to come back, not rung
       expect(tablet.device.pulls).toBe(pulls + 1);
       expect(tablet.device.tasks.get(T1)?.title).toBe('Late');
+    });
+
+    it('a phone that connects with an old token is told by a message, gets a new one, and pulls once', async () => {
+      const old = jwt.sign({
+        sub: ann.id,
+        exp: Math.floor(Date.now() / 1000) - 5,
+      });
+      const tablet = phone(ann, 'tablet', { token: old });
+      await tablet.connect();
+      expect(tablet.unauthorized).toBe(1);
+      expect(tablet.connects).toBe(1);
+      expect(tablet.device.pulls).toBe(1);
+      expect(realtime.count(ann.id)).toBe(1);
     });
 
     it('the same on a ping', async () => {
@@ -557,7 +570,7 @@ describe('Realtime (the "done when" list of stage B6)', () => {
       await quiet(2300);
       c.socket.send('{"t":"ping"}');
       expect(await c.closed).toBe(4401);
-      expect(c.messages).toEqual([]);
+      expect(c.messages).toEqual(['{"t":"unauthorized"}']);
     });
   });
 
