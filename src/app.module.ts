@@ -12,6 +12,7 @@ import { DatabaseModule } from './database/database.module';
 import { DiaryModule } from './diary/diary.module';
 import { GroupsModule } from './groups/groups.module';
 import { HealthModule } from './health/health.module';
+import { RealtimeGatewayModule } from './realtime/realtime-gateway.module';
 import { SyncModule } from './sync/sync.module';
 import { TasksModule } from './tasks/tasks.module';
 import { UsersModule } from './users/users.module';
@@ -39,6 +40,7 @@ import { UsersModule } from './users/users.module';
     DiaryModule,
     CycleModule,
     GroupsModule,
+    RealtimeGatewayModule,
     SyncModule,
   ],
   providers: [

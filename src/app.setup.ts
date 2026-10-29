@@ -1,5 +1,6 @@
 import { json, NextFunction, Request, Response } from 'express';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { WsAdapter } from '@nestjs/platform-ws';
 
 // Express reads the client address from X-Forwarded-For only for this many proxy hops,
 // counted from the server's side. 0 = trust nothing and use the socket address.
@@ -16,4 +17,9 @@ export function configureBodyLimit(app: NestExpressApplication) {
   app.use('/sync/push', (req: Request, res: Response, next: NextFunction) =>
     bigJson(req, res, next),
   );
+}
+
+// Plain `ws` sockets (no Socket.IO) on the same port as the HTTP routes.
+export function configureWebSocket(app: NestExpressApplication) {
+  app.useWebSocketAdapter(new WsAdapter(app));
 }

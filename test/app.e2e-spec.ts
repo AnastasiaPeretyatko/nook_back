@@ -1,8 +1,10 @@
-import { Global, INestApplication, Module } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
+import { configureWebSocket } from '../src/app.setup';
 import { DatabaseModule } from '../src/database/database.module';
 
 // Real AppModule (config, filter, health) with only the database connection faked,
@@ -28,7 +30,7 @@ const query = jest.fn();
 class FakeDatabaseModule {}
 
 describe('App (wiring)', () => {
-  let app: INestApplication;
+  let app: NestExpressApplication;
 
   beforeAll(async () => {
     process.env.DATABASE_URL = 'postgresql://u:p@localhost/db';
@@ -37,7 +39,8 @@ describe('App (wiring)', () => {
       .overrideModule(DatabaseModule)
       .useModule(FakeDatabaseModule)
       .compile();
-    app = moduleRef.createNestApplication();
+    app = moduleRef.createNestApplication<NestExpressApplication>();
+    configureWebSocket(app);
     app.useLogger(false);
     await app.init();
   });

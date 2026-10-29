@@ -10,6 +10,7 @@ import {
   Post,
 } from '@nestjs/common';
 import { CurrentUserId } from '../auth/auth.guard';
+import { DeviceId } from '../realtime/device-id';
 import { GroupNameDto } from './dto/group-name.dto';
 import { JoinGroupDto } from './dto/join-group.dto';
 import { groupNotFound, GroupsService } from './groups.service';
@@ -24,14 +25,22 @@ export class GroupsController {
   constructor(private readonly groups: GroupsService) {}
 
   @Post()
-  create(@CurrentUserId() userId: string, @Body() dto: GroupNameDto) {
-    return this.groups.create(userId, dto.name);
+  create(
+    @CurrentUserId() userId: string,
+    @Body() dto: GroupNameDto,
+    @DeviceId() deviceId?: string,
+  ) {
+    return this.groups.create(userId, dto.name, deviceId);
   }
 
   @Post('join')
   @HttpCode(200)
-  join(@CurrentUserId() userId: string, @Body() dto: JoinGroupDto) {
-    return this.groups.join(userId, dto.code);
+  join(
+    @CurrentUserId() userId: string,
+    @Body() dto: JoinGroupDto,
+    @DeviceId() deviceId?: string,
+  ) {
+    return this.groups.join(userId, dto.code, deviceId);
   }
 
   @Post(':id/leave')
@@ -39,8 +48,9 @@ export class GroupsController {
   async leave(
     @CurrentUserId() userId: string,
     @Param('id', groupId()) id: string,
+    @DeviceId() deviceId?: string,
   ) {
-    await this.groups.leave(userId, id);
+    await this.groups.leave(userId, id, deviceId);
   }
 
   @Delete(':id/members/:memberId')
@@ -49,8 +59,9 @@ export class GroupsController {
     @CurrentUserId() userId: string,
     @Param('id', groupId()) id: string,
     @Param('memberId', groupId()) memberId: string,
+    @DeviceId() deviceId?: string,
   ) {
-    await this.groups.removeMember(userId, id, memberId);
+    await this.groups.removeMember(userId, id, memberId, deviceId);
   }
 
   @Delete(':id')
@@ -58,8 +69,9 @@ export class GroupsController {
   async remove(
     @CurrentUserId() userId: string,
     @Param('id', groupId()) id: string,
+    @DeviceId() deviceId?: string,
   ) {
-    await this.groups.remove(userId, id);
+    await this.groups.remove(userId, id, deviceId);
   }
 
   @Patch(':id')
@@ -68,8 +80,9 @@ export class GroupsController {
     @CurrentUserId() userId: string,
     @Param('id', groupId()) id: string,
     @Body() dto: GroupNameDto,
+    @DeviceId() deviceId?: string,
   ) {
-    await this.groups.rename(userId, id, dto.name);
+    await this.groups.rename(userId, id, dto.name, deviceId);
   }
 
   @Get(':id/invite')

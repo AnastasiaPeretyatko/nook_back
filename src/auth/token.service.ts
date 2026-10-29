@@ -27,16 +27,25 @@ export class TokenService {
     );
   }
 
-  // The user id, or null for anything wrong: bad signature, expired, wrong algorithm.
-  async verifyAccessToken(token: string): Promise<string | null> {
+  // The user id and the moment the token expires (ms), or null for anything wrong: bad
+  // signature, expired, wrong algorithm, no expiry. The WebSocket needs the expiry because
+  // its connection can outlive the token.
+  async readAccessToken(token: string) {
     try {
-      const { sub } = await this.jwt.verifyAsync<{ sub?: unknown }>(token, {
-        algorithms: ['HS256'],
-      });
-      return typeof sub === 'string' ? sub : null;
+      const { sub, exp } = await this.jwt.verifyAsync<{
+        sub?: unknown;
+        exp?: unknown;
+      }>(token, { algorithms: ['HS256'] });
+      return typeof sub === 'string' && typeof exp === 'number'
+        ? { userId: sub, expiresAt: exp * 1000 }
+        : null;
     } catch {
       return null;
     }
+  }
+
+  async verifyAccessToken(token: string): Promise<string | null> {
+    return (await this.readAccessToken(token))?.userId ?? null;
   }
 
   // A random opaque string. Only its hash is stored, so a database leak gives no sessions.

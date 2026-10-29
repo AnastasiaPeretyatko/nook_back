@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, EntityManager } from 'typeorm';
+import { Ringer } from '../realtime/ringer.service';
 import * as inviteCode from './invite-code';
 
 // A fresh code can meet an existing one (a million codes, few groups); drawing again is the
@@ -17,8 +18,11 @@ const CODE_TRIES = 10;
 // Wrong guesses of an invite code an account may make in an hour.
 const MAX_WRONG_CODES = 10;
 
+// `changed` is false when the caller was a member already: nothing happened, nobody is rung.
 type JoinOutcome =
-  { kind: 'joined'; id: string } | { kind: 'blocked' } | { kind: 'wrong' };
+  | { kind: 'joined'; id: string; changed: boolean }
+  | { kind: 'blocked' }
+  | { kind: 'wrong' };
 
 const notOwner = () =>
   new ForbiddenException({
@@ -37,11 +41,18 @@ export const groupNotFound = () =>
 
 @Injectable()
 export class GroupsService {
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly ringer: Ringer,
+  ) {}
 
   // The group, its owner's membership and its code are made together or not at all.
-  async create(userId: string, name: string): Promise<{ id: string }> {
-    return this.dataSource.transaction(async (manager) => {
+  async create(
+    userId: string,
+    name: string,
+    deviceId?: string,
+  ): Promise<{ id: string }> {
+    const created = await this.dataSource.transaction(async (manager) => {
       const [{ id }] = await manager.query<{ id: string }[]>(
         `insert into groups (name, owner_id) values ($1, $2) returning id`,
         [name, userId],
@@ -53,6 +64,9 @@ export class GroupsService {
       await this.insertCode(manager, id);
       return { id };
     });
+    // The new group is in the snapshot of the creator's other phones.
+    await this.ringer.ringFrom(userId, deviceId);
+    return created;
   }
 
   // Joins by the code. Six digits are easy to enumerate, so an account that guessed wrong ten
@@ -61,7 +75,11 @@ export class GroupsService {
   // parallel requests cannot all pass the count before any of them is recorded. The outcome is
   // returned, not thrown, from inside the transaction: a throw would roll back the wrong guess
   // that has just been written, and nothing would ever be counted.
-  async join(userId: string, input: string): Promise<{ id: string }> {
+  async join(
+    userId: string,
+    input: string,
+    deviceId?: string,
+  ): Promise<{ id: string }> {
     const code = input.replace(/\D/g, '');
     const outcome = await this.dataSource.transaction(
       async (manager): Promise<JoinOutcome> => {
@@ -101,7 +119,7 @@ export class GroupsService {
            where group_id = $1 and user_id = $2 and deleted_at is null`,
           [id, userId],
         );
-        if (member) return { kind: 'joined', id };
+        if (member) return { kind: 'joined', id, changed: false };
 
         // A comeback revives the old row.
         await manager.query(
@@ -122,7 +140,7 @@ export class GroupsService {
            where task_id in (select id from tasks where group_id = $1 and deleted_at is null)`,
           [id],
         );
-        return { kind: 'joined', id };
+        return { kind: 'joined', id, changed: true };
       },
     );
 
@@ -141,25 +159,38 @@ export class GroupsService {
         message: 'No group has this invite code',
       });
     }
+    // The members now include the newcomer, so they and the newcomer's other phones all hear.
+    if (outcome.changed) {
+      await this.ringer.ringFrom(userId, deviceId, { groups: [outcome.id] });
+    }
     return { id: outcome.id };
   }
 
   // A member leaves. The owner cannot (the group would be left without one): they delete it. A
   // repeat does nothing: a phone whose answer was lost sends it again. Told apart from a
   // stranger only by having a membership row at all, and a stranger is `404`.
-  async leave(userId: string, groupId: string) {
+  async leave(userId: string, groupId: string, deviceId?: string) {
     const group = await this.findForMember(userId, groupId);
     if (group.owner_id === userId) {
       if (group.group_deleted) return;
       throw ownerCannotLeave();
     }
-    await this.dataSource.transaction((manager) =>
+    const left = await this.dataSource.transaction((manager) =>
       this.dropMember(manager, groupId, userId),
     );
+    // Those who stay, and the leaver's other phones (the group left their snapshot).
+    if (left) {
+      await this.ringer.ringFrom(userId, deviceId, { groups: [groupId] });
+    }
   }
 
   // The owner removes someone else. Removing oneself is leaving, which the owner cannot do.
-  async removeMember(userId: string, groupId: string, memberId: string) {
+  async removeMember(
+    userId: string,
+    groupId: string,
+    memberId: string,
+    deviceId?: string,
+  ) {
     await this.requireOwner(userId, groupId);
     if (memberId === userId) throw ownerCannotLeave();
     const [member] = await this.dataSource.query<unknown[]>(
@@ -167,14 +198,21 @@ export class GroupsService {
       [groupId, memberId],
     );
     if (!member) throw groupNotFound();
-    await this.dataSource.transaction((manager) =>
+    const removed = await this.dataSource.transaction((manager) =>
       this.dropMember(manager, groupId, memberId),
     );
+    // Those who stay, and the one removed: the group is gone from their snapshot.
+    if (removed) {
+      await this.ringer.ringFrom(userId, deviceId, {
+        groups: [groupId],
+        users: [memberId],
+      });
+    }
   }
 
   // The group, its memberships and its tasks are stamped deleted; a deleted task is emptied by
   // the trigger and loses its marks. The rows stay, so that a phone that was off hears of it.
-  async remove(userId: string, groupId: string) {
+  async remove(userId: string, groupId: string, deviceId?: string) {
     const group = await this.findForMember(userId, groupId);
     if (group.owner_id !== userId) {
       // A member who has left, or of a group already gone, has no business here.
@@ -182,13 +220,15 @@ export class GroupsService {
       throw notOwner();
     }
     if (group.group_deleted) return;
-    await this.dataSource.transaction(async (manager) => {
+    const members = await this.dataSource.transaction(async (manager) => {
       await manager.query(
         `update groups set deleted_at = now() where id = $1`,
         [groupId],
       );
-      await manager.query(
-        `update group_members set deleted_at = now() where group_id = $1 and deleted_at is null`,
+      // An update with `returning` answers [rows, count].
+      const [former] = await manager.query<[{ user_id: string }[], number]>(
+        `update group_members set deleted_at = now()
+         where group_id = $1 and deleted_at is null returning user_id`,
         [groupId],
       );
       await manager.query(
@@ -196,15 +236,27 @@ export class GroupsService {
          where group_id = $1 and deleted_at is null`,
         [groupId],
       );
+      return former.map((m) => m.user_id);
     });
+    // Everyone who was in the group, named outright: nobody is left in it to look up.
+    await this.ringer.ringFrom(userId, deviceId, { users: members });
   }
 
-  async rename(userId: string, groupId: string, name: string) {
+  async rename(
+    userId: string,
+    groupId: string,
+    name: string,
+    deviceId?: string,
+  ) {
     await this.requireOwner(userId, groupId);
-    await this.dataSource.query(`update groups set name = $2 where id = $1`, [
-      groupId,
-      name,
-    ]);
+    const [renamed] = await this.dataSource.query<[unknown[], number]>(
+      `update groups set name = $2 where id = $1 and name is distinct from $2
+       returning id`,
+      [groupId, name],
+    );
+    if (renamed.length > 0) {
+      await this.ringer.ringFrom(userId, deviceId, { groups: [groupId] });
+    }
   }
 
   async invite(userId: string, groupId: string): Promise<{ code: string }> {
@@ -258,10 +310,10 @@ export class GroupsService {
     manager: EntityManager,
     groupId: string,
     memberId: string,
-  ) {
-    await manager.query(
+  ): Promise<boolean> {
+    const [dropped] = await manager.query<[unknown[], number]>(
       `update group_members set deleted_at = now()
-       where group_id = $1 and user_id = $2 and deleted_at is null`,
+       where group_id = $1 and user_id = $2 and deleted_at is null returning user_id`,
       [groupId, memberId],
     );
     await manager.query(
@@ -269,6 +321,7 @@ export class GroupsService {
        where group_id = $1 and assignee_id = $2`,
       [groupId, memberId],
     );
+    return dropped.length > 0;
   }
 
   // The group as the caller can see it: they must have a membership row, of any kind. Nobody

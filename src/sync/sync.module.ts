@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { RealtimeModule } from '../realtime/realtime.module';
 import { CycleWriter } from './cycle-writer';
 import { DeletionWriter } from './deletion-writer';
 import { EntryWriter } from './entry-writer';
@@ -10,6 +11,7 @@ import { SyncPushService } from './sync-push.service';
 import { TaskWriter } from './task-writer';
 
 @Module({
+  imports: [RealtimeModule],
   controllers: [SyncController],
   providers: [
     TaskWriter,

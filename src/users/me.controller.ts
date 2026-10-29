@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Put } from '@nestjs/common';
 import { CurrentUserId } from '../auth/auth.guard';
+import { DeviceId } from '../realtime/device-id';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UsersService } from './users.service';
 
@@ -16,7 +17,8 @@ export class MeController {
   updateProfile(
     @CurrentUserId() userId: string,
     @Body() dto: UpdateProfileDto,
+    @DeviceId() deviceId?: string,
   ) {
-    return this.users.updateProfile(userId, dto);
+    return this.users.updateProfile(userId, dto, deviceId);
   }
 }

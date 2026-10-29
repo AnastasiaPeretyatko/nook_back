@@ -1,12 +1,13 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { RealtimeModule } from '../realtime/realtime.module';
 import { MeController } from './me.controller';
 import { Profile } from './profile.entity';
 import { User } from './user.entity';
 import { UsersService } from './users.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, Profile])],
+  imports: [TypeOrmModule.forFeature([User, Profile]), RealtimeModule],
   controllers: [MeController],
   providers: [UsersService],
   exports: [TypeOrmModule, UsersService],

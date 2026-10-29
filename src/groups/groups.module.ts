@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { RealtimeModule } from '../realtime/realtime.module';
 import { GroupInvite } from './group-invite.entity';
 import { GroupJoinFailure } from './group-join-failure.entity';
 import { GroupMember } from './group-member.entity';
@@ -15,6 +16,7 @@ import { GroupsService } from './groups.service';
       GroupInvite,
       GroupJoinFailure,
     ]),
+    RealtimeModule,
   ],
   controllers: [GroupsController],
   providers: [GroupsService],

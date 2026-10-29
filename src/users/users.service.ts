@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, QueryFailedError, Repository } from 'typeorm';
+import { Ringer } from '../realtime/ringer.service';
 import { Profile } from './profile.entity';
 
 // What the API calls `user`.
@@ -32,6 +33,7 @@ export class UsersService {
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     @InjectRepository(Profile) private readonly profiles: Repository<Profile>,
+    private readonly ringer: Ringer,
   ) {}
 
   // The account with its profile (which may not exist yet), in one query.
@@ -75,7 +77,10 @@ export class UsersService {
   async updateProfile(
     userId: string,
     profile: { displayName: string | null; avatarUrl: string | null },
+    deviceId?: string,
   ): Promise<PublicUser> {
+    // Read first, to ring only when the name or the picture really changed.
+    const before = await this.getById(userId);
     try {
       await this.profiles.upsert({ userId, ...profile }, ['userId']);
     } catch (error) {
@@ -89,7 +94,15 @@ export class UsersService {
       }
       throw error;
     }
-    return this.getById(userId);
+    const after = await this.getById(userId);
+    if (
+      before.displayName !== after.displayName ||
+      before.avatarUrl !== after.avatarUrl
+    ) {
+      // The people of my groups see my name and picture in the snapshot of their groups.
+      await this.ringer.ringFrom(userId, deviceId, { inSendersGroups: true });
+    }
+    return after;
   }
 
   private noSuchUser() {

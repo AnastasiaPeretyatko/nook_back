@@ -33,6 +33,24 @@ describe('TokenService access tokens', () => {
     expect(ACCESS_TTL_SECONDS).toBe(3600);
   });
 
+  it('readAccessToken gives the user and the expiry in milliseconds', async () => {
+    at('2026-01-01T00:00:00Z');
+    const token = await service.signAccessToken('user-1');
+    expect(await service.readAccessToken(token)).toEqual({
+      userId: 'user-1',
+      expiresAt: new Date('2026-01-01T01:00:00Z').getTime(),
+    });
+  });
+
+  it('rejects a token that never expires', async () => {
+    const token = await new JwtService({ secret: SECRET }).signAsync(
+      { sub: 'user-1' },
+      { algorithm: 'HS256' },
+    );
+    expect(await service.readAccessToken(token)).toBeNull();
+    expect(await service.verifyAccessToken(token)).toBeNull();
+  });
+
   it('rejects a token signed with another secret', async () => {
     const foreign = new JwtService({
       secret: 'another-secret-another-secret-0123456',
