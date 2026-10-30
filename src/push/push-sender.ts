@@ -6,6 +6,7 @@ import {
   FirebaseServiceAccount,
   parseServiceAccount,
 } from '../config/firebase-account';
+import { errorText } from '../common/error-text';
 
 export interface PushMessage {
   title: string;
@@ -101,7 +102,7 @@ export class PushSender implements OnModuleInit {
       );
       return 'failed';
     } catch (error) {
-      this.logger.warn(`FCM send failed: ${(error as Error).message}`);
+      this.logger.warn(`FCM send failed: ${errorText(error)}`);
       return 'failed';
     }
   }

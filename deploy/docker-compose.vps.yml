@@ -1,0 +1,63 @@
+# Nook on your own server: the app, its Postgres and Caddy (HTTPS) in one Docker network.
+# Run from this folder:  cp .env.example .env  (fill it in),  docker compose -f docker-compose.vps.yml up -d --build
+# Only Caddy is reachable from the internet (ports 80 and 443). The app and the database are not.
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nook
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: nook
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Loopback only: lets scripts/backup.sh on the server reach the database; nobody outside can.
+    ports:
+      - '127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U nook -d nook']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # The image sets NODE_ENV=production. The database is in the same Docker network, so the
+      # connection stays inside the server and needs no TLS (the app allows that only for a
+      # host name without dots, like "postgres").
+      DATABASE_URL: postgresql://nook:${POSTGRES_PASSWORD}@postgres:5432/nook
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      GOOGLE_CLIENT_IDS: ${GOOGLE_CLIENT_IDS:-}
+      FIREBASE_SERVICE_ACCOUNT: ${FIREBASE_SERVICE_ACCOUNT:-}
+      # One proxy (Caddy) stands in front of the app. SELF_PING_URL is NOT set on purpose: a
+      # server of your own does not sleep, and pinging itself would only add noise.
+      TRUST_PROXY_HOPS: '1'
+    # No ports: Caddy reaches it as app:3000 inside the network.
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    ports:
+      - '${HTTP_PORT:-80}:80'
+      - '${HTTPS_PORT:-443}:443'
+    volumes:
+      - ./Caddyfile.example:/etc/caddy/Caddyfile:ro
+      # The certificates live here; losing this volume means asking for new ones.
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

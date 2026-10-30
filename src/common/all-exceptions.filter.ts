@@ -7,6 +7,8 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Response } from 'express';
+import { isDbUnavailable } from './db-unavailable';
+import { errorStack, errorText } from './error-text';
 
 // Default code per status for errors that did not name one themselves.
 const STATUS_CODES: Record<number, string> = {
@@ -32,6 +34,9 @@ function isClientError(
   );
 }
 
+// A sleeping Neon needs a few seconds to wake; the app waits this long before trying again.
+const RETRY_AFTER_SECONDS = '5';
+
 // Every error leaves the server as `{ code, message }` (API contract, section 4 of the plan).
 // Throw `new XException({ code: 'bad_code', message: '...' })` to choose the code.
 @Catch()
@@ -44,6 +49,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let status: number = HttpStatus.INTERNAL_SERVER_ERROR;
     let code = 'internal_error';
     let message = 'Internal server error';
+    let logged = false;
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -78,12 +84,22 @@ export class AllExceptionsFilter implements ExceptionFilter {
       message = exception.message;
     }
 
+    // The database is down, asleep or overloaded: tell the app to come back soon, do not blame
+    // our code. A write may or may not have gone through if the link broke at the last moment;
+    // the app repeats it, and a repeated push is harmless (rows are keyed by id).
+    else if (isDbUnavailable(exception)) {
+      status = HttpStatus.SERVICE_UNAVAILABLE;
+      code = 'db_unavailable';
+      message = 'Database is unavailable';
+      res.setHeader('Retry-After', RETRY_AFTER_SECONDS);
+      // One line, no stack: during an outage every request fails the same way.
+      this.logger.warn(`Database unavailable: ${errorText(exception)}`);
+      logged = true;
+    }
+
     // Unknown errors are logged with the stack and never shown to the client.
-    if (status >= 500) {
-      this.logger.error(
-        exception instanceof Error ? exception.message : String(exception),
-        exception instanceof Error ? exception.stack : undefined,
-      );
+    if (status >= 500 && !logged) {
+      this.logger.error(errorText(exception), errorStack(exception));
     }
 
     if (res.headersSent) return;

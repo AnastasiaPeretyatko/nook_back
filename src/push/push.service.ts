@@ -3,6 +3,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { Notification, planPush, PushEvent, PushWorld } from './plan-push';
 import { PushSender } from './push-sender';
+import { errorText } from '../common/error-text';
 
 // How many phones are sent to at the same moment.
 const AT_ONCE = 10;
@@ -51,8 +52,8 @@ export class PushService {
   notify(events: PushEvent[]): void {
     if (!this.sender.enabled || events.length === 0) return;
     const job: Promise<void> = this.run(events)
-      .catch((error: Error) =>
-        this.logger.warn(`Push notifications failed: ${error.message}`),
+      .catch((error: unknown) =>
+        this.logger.warn(`Push notifications failed: ${errorText(error)}`),
       )
       .finally(() => this.pending.delete(job));
     this.pending.add(job);

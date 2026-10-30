@@ -39,7 +39,7 @@ describe('validateEnv', () => {
 
   it('requires sslmode in DATABASE_URL in production only', () => {
     const plain = {
-      DATABASE_URL: 'postgresql://u:p@h/d',
+      DATABASE_URL: 'postgresql://u:p@db.example.com/d',
       JWT_SECRET: valid.JWT_SECRET,
     };
     expect(() => validateEnv({ ...plain, NODE_ENV: 'production' })).toThrow(
@@ -51,6 +51,46 @@ describe('validateEnv', () => {
     expect(() =>
       validateEnv({ ...valid, NODE_ENV: 'production' }),
     ).not.toThrow();
+  });
+
+  describe('plain text to the database in production', () => {
+    const prod = (host: string, query = '') => ({
+      DATABASE_URL: `postgresql://u:p@${host}/d${query}`,
+      JWT_SECRET: valid.JWT_SECRET,
+      NODE_ENV: 'production',
+    });
+
+    it.each([
+      'localhost:5432',
+      '127.0.0.1',
+      '[::1]:5432',
+      'postgres',
+      'postgres:5432',
+      'my-db_1',
+    ])(
+      'allows %s: a database on this machine or in the Docker network',
+      (host) => {
+        expect(() => validateEnv(prod(host))).not.toThrow();
+        expect(() => validateEnv(prod(host, '?sslmode=disable'))).not.toThrow();
+      },
+    );
+
+    it.each([
+      'db.example.com',
+      'ep-x-pooler.c-6.us-east-2.aws.neon.tech',
+      '8.8.8.8',
+      '10.0.0.5',
+      '2130706433', // 127.0.0.1 to the resolver, but any address could hide like this
+      '134744072', // 8.8.8.8
+      '[2001:db8::1]',
+      '[::2]',
+    ])('still demands TLS for %s', (host) => {
+      expect(() => validateEnv(prod(host))).toThrow(/sslmode/);
+      expect(() => validateEnv(prod(host, '?sslmode=disable'))).toThrow(
+        /sslmode/,
+      );
+      expect(() => validateEnv(prod(host, '?sslmode=require'))).not.toThrow();
+    });
   });
 
   it('fails on a bad PORT', () => {

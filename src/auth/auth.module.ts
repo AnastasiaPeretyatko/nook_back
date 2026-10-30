@@ -31,6 +31,6 @@ import { TokenService } from './token.service';
     GoogleTokenVerifier,
     { provide: OAuth2Client, useFactory: () => new OAuth2Client() },
   ],
-  exports: [PasswordService, TokenService],
+  exports: [PasswordService, TokenService, GoogleTokenVerifier],
 })
 export class AuthModule {}

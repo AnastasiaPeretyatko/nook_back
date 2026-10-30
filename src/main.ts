@@ -5,6 +5,7 @@ import { AppModule } from './app.module';
 import {
   configureBodyLimit,
   configureProxy,
+  configureSecurity,
   configureWebSocket,
 } from './app.setup';
 import { EnvironmentVariables } from './config/env.validation';
@@ -13,6 +14,7 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const config =
     app.get<ConfigService<EnvironmentVariables, true>>(ConfigService);
+  configureSecurity(app); // first: the later steps answer too
   configureProxy(app, config.get('TRUST_PROXY_HOPS', { infer: true }));
   configureBodyLimit(app);
   configureWebSocket(app);

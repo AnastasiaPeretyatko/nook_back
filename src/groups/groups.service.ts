@@ -220,26 +220,37 @@ export class GroupsService {
       throw notOwner();
     }
     if (group.group_deleted) return;
-    const members = await this.dataSource.transaction(async (manager) => {
-      await manager.query(
-        `update groups set deleted_at = now() where id = $1`,
-        [groupId],
-      );
-      // An update with `returning` answers [rows, count].
-      const [former] = await manager.query<[{ user_id: string }[], number]>(
-        `update group_members set deleted_at = now()
-         where group_id = $1 and deleted_at is null returning user_id`,
-        [groupId],
-      );
-      await manager.query(
-        `update tasks set deleted_at = now(), client_updated_at = now()
-         where group_id = $1 and deleted_at is null`,
-        [groupId],
-      );
-      return former.map((m) => m.user_id);
-    });
+    const members = await this.dataSource.transaction((manager) =>
+      this.deleteGroupRows(manager, groupId),
+    );
     // Everyone who was in the group, named outright: nobody is left in it to look up.
     await this.ringer.ringFrom(userId, deviceId, { users: members });
+  }
+
+  // Deleting a person's account (B8.5), inside the caller's transaction: the groups they own are
+  // deleted as `remove` does, and they leave all the others as `leave` does. Returns whom to ring
+  // after the commit: the former members of the deleted groups, and the groups they left.
+  async departFromAll(manager: EntityManager, userId: string) {
+    const owned = await manager.query<{ id: string }[]>(
+      `select id from groups where owner_id = $1 and deleted_at is null`,
+      [userId],
+    );
+    const users = new Set<string>();
+    for (const { id } of owned) {
+      for (const member of await this.deleteGroupRows(manager, id)) {
+        users.add(member);
+      }
+    }
+    users.delete(userId);
+    // The memberships in the groups just deleted are gone already, so only the others are left.
+    const joined = await manager.query<{ group_id: string }[]>(
+      `select group_id from group_members where user_id = $1 and deleted_at is null`,
+      [userId],
+    );
+    for (const { group_id } of joined) {
+      await this.dropMember(manager, group_id, userId);
+    }
+    return { groups: joined.map((m) => m.group_id), users: [...users] };
   }
 
   async rename(
@@ -300,6 +311,25 @@ export class GroupsService {
       if (rows.length > 0) return;
     }
     throw new Error('Could not draw an unused invite code');
+  }
+
+  // The group, its memberships and its tasks stamped deleted. Returns who was in it.
+  private async deleteGroupRows(manager: EntityManager, groupId: string) {
+    await manager.query(`update groups set deleted_at = now() where id = $1`, [
+      groupId,
+    ]);
+    // An update with `returning` answers [rows, count].
+    const [former] = await manager.query<[{ user_id: string }[], number]>(
+      `update group_members set deleted_at = now()
+       where group_id = $1 and deleted_at is null returning user_id`,
+      [groupId],
+    );
+    await manager.query(
+      `update tasks set deleted_at = now(), client_updated_at = now()
+       where group_id = $1 and deleted_at is null`,
+      [groupId],
+    );
+    return former.map((m) => m.user_id);
   }
 
   // What leaving and being removed have in common. The tasks handed to the person go back to

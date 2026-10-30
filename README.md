@@ -1,98 +1,304 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Nook server
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Сервер для приложения Nook (Flutter). Хранит задачи, дневник, цикл и группы пользователей, пускает их по почте и паролю или через Google, синхронизирует данные между телефонами, «звонит» телефону по WebSocket, когда данные изменились, и шлёт push-уведомления.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Стек: **NestJS 11 + TypeORM + PostgreSQL**, Node.js 22. Сделан так, чтобы жить на бесплатных тарифах (Render + Neon) и без переделки переехать на свой сервер (VPS).
 
-## Description
+Что в репозитории:
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+| Где | Что |
+|---|---|
+| `src/` | код сервера |
+| `test/` | сквозные тесты (на настоящей базе) |
+| `scripts/` | копии базы (`backup.sh`, `restore.sh`), проверка работающего сервера (`smoke.mjs`) |
+| `deploy/` | пример для своего сервера: `docker-compose.vps.yml`, `Caddyfile.example` |
+| `Dockerfile` | образ для Render и для своего сервера |
+| `BACKUP.md` | как делать копии базы и восстанавливать |
+| `architecture.md` | как устроен код изнутри (для тех, кто будет его менять) |
 
-## Project setup
+## Содержание
 
-```bash
-$ npm install
-```
+1. [Запуск на своём компьютере](#запуск-на-своём-компьютере)
+2. [Переменные окружения](#переменные-окружения)
+3. [Команды](#команды)
+4. [Тесты](#тесты)
+5. [Как устроен API](#как-устроен-api)
+6. [Правила, которые нельзя нарушать](#правила-которые-нельзя-нарушать)
+7. [Деплой на Render + Neon](#деплой-на-render--neon)
+8. [Переезд на свой сервер (VPS)](#переезд-на-свой-сервер-vps)
+9. [Резервные копии](#резервные-копии)
+10. [Частые ошибки](#частые-ошибки)
 
-## Compile and run the project
+## Запуск на своём компьютере
 
-```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
-```
-
-## Run tests
+Нужны: **Node.js 22**, **Docker** (для базы) и `curl`.
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+git clone https://github.com/AnastasiaPeretyatko/nook_back.git
+cd nook_back
+npm ci
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+**База данных.** Проще всего — Postgres в Docker. Порт 5433 выбран, чтобы не мешать Postgres, если он уже стоит на компьютере (занят и он — возьмите любой другой, но тогда поправьте его и в адресе ниже):
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+docker run --name nook-pg -e POSTGRES_USER=nook -e POSTGRES_PASSWORD=nook -e POSTGRES_DB=nook \
+  -p 5433:5432 -d postgres:17
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Это **отдельная** база для работы. Не используйте для неё базу из `npm run test:db:up`: тесты очищают свою базу целиком.
 
-## Resources
+**Настройки** лежат в файле `.env` (в репозиторий он не попадает). Создайте его так:
 
-Check out a few resources that may come in handy when working with NestJS:
+```bash
+cat > .env <<EOF
+NODE_ENV=development
+DATABASE_URL=postgresql://nook:nook@localhost:5433/nook
+JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))")
+EOF
+```
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+Остальные переменные необязательны, их описание — [ниже](#переменные-окружения). Образец со всеми — файл `.env.example`.
 
-## Support
+**Таблицы в базе** создают миграции (это файлы, которые по порядку приводят базу к нужному виду). Сначала собрать код, потом применить:
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+```bash
+npm run build
+npm run migration:run
+```
 
-## Stay in touch
+**Запуск:**
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+```bash
+npm run start:dev
+```
 
-## License
+Сервер слушает `http://localhost:3000` и перезапускается сам при правке кода. Для запуска без слежения за файлами: `npm run build && npm run start:prod`.
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+**Проверка, что всё работает.** В другом окне терминала:
+
+```bash
+curl -s localhost:3000/health
+# {"ok":true}
+node scripts/smoke.mjs
+```
+
+`smoke.mjs` проходит весь путь: регистрирует тестовый аккаунт, проверяет `/me`, открывает WebSocket и получает `pong` на `ping`, записывает задачу «с другого телефона» и получает **звонок** `{"t":"changed"}`, читает её обратно и удаляет тестовый аккаунт. В конце должно быть `All good.` Тот же скрипт годится для проверки сервера на Render или VPS: `node scripts/smoke.mjs https://адрес-сервера`.
+
+Вручную регистрация выглядит так:
+
+```bash
+curl -s -X POST localhost:3000/auth/register -H 'content-type: application/json' \
+  -d '{"email":"me@example.com","password":"correct horse"}'
+```
+
+В ответе — `accessToken` (пропуск на час), `refreshToken` (чтобы получить новый пропуск) и `user`.
+
+## Переменные окружения
+
+Сервер **проверяет их при запуске** и не стартует, если что-то не так, с понятным сообщением `Invalid environment variables: …`.
+
+| Переменная | Нужна? | Зачем | Пример |
+|---|---|---|---|
+| `DATABASE_URL` | **да** | Адрес базы PostgreSQL. В продакшене (`NODE_ENV=production`) должен содержать `sslmode=require` (шифрованное соединение) — кроме базы на этом же компьютере или в той же сети Docker (`localhost` или имя без точек, например `postgres`). Для Neon берите адрес **через пулер** (в имени хоста `-pooler`) | `postgresql://user:pass@ep-x-pooler.us-east-2.aws.neon.tech/db?sslmode=require` |
+| `JWT_SECRET` | **да** | Секрет, которым подписываются пропуска (access-токены). У кого он есть, тот может выписать пропуск любому человеку, поэтому: минимум 32 символа, не в репозиторий, не в логи. Смена выбивает всех из системы (приложение само обновит пропуска) | `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"` |
+| `NODE_ENV` | нет (`development`) | `development`, `production` или `test`. В `production` включаются запреты: нет шифрования базы — не стартуем; `RATE_LIMIT=off` — не стартуем | `production` |
+| `PORT` | нет (`3000`) | Порт сервера. Render задаёт сам | `3000` |
+| `GOOGLE_CLIENT_IDS` | нет | Вход через Google: ID «клиентов» Google Cloud (через запятую), для которых сервер принимает ID-токены. Пусто — вход через Google отключён (все токены отвергаются) | `123-abc.apps.googleusercontent.com` |
+| `FIREBASE_SERVICE_ACCOUNT` | нет | Ключ Firebase для push-уведомлений: файл ключа (JSON), закодированный в base64 в одну строку: `base64 -w0 key.json`. Пусто — push выключен, остальное работает. Ключ есть, но сломан — сервер не стартует. **Секрет** | (длинная строка) |
+| `SELF_PING_URL` | нет | Публичный адрес самого сервера. Если задан, сервер раз в 5 минут сам обращается к своему `/health`, чтобы Render не усыпил его. **Только для Render**; на своём сервере и локально не задавать | `https://nook-krq9.onrender.com` |
+| `TRUST_PROXY_HOPS` | нет (`0`) | Сколько прокси стоит между интернетом и сервером (0–5). От этого зависит, как сервер узнаёт адрес клиента для лимитов частоты. Слишком много — клиент может подделать адрес и обойти лимит; слишком мало — все пользователи выглядят как один адрес и блокируют друг друга. Локально 0, **на Render 3**, за одним Caddy на своём сервере 1 | `3` |
+| `RATE_LIMIT` | нет (`on`) | `off` выключает лимиты частоты. Нужно только тестам; в продакшене сервер с `off` не стартует | `on` |
+| `TEST_DATABASE_URL` | только для тестов | Адрес тестовой базы; по умолчанию `postgresql://nook:nook@localhost:54330/nook_test` (её поднимает `npm run test:db:up`). Тесты **очищают** эту базу, поэтому они отказываются работать с любым адресом, кроме локального | |
+
+Как проверить `TRUST_PROXY_HOPS` на новом месте: с компьютера сделать 11 неверных входов подряд (`POST /auth/login`), подставляя разные выдуманные адреса в `X-Forwarded-For` — 11-й должен получить `429`. Пока компьютер заблокирован, зайти с телефона из другой сети: должен прийти обычный `401`, а не `429`. `429` на телефоне — число слишком маленькое; `429` на компьютере не пришёл — слишком большое.
+
+## Команды
+
+| Команда | Что делает |
+|---|---|
+| `npm run start:dev` | запуск с перезапуском при правке кода |
+| `npm run build` | сборка в папку `dist/` |
+| `npm run start:prod` | запуск собранного (`node dist/main`) |
+| `npm run lint` | проверка кода (**сама правит файлы**, `--fix`) |
+| `npm run format` | форматирование кода |
+| `npm test` | быстрые тесты рядом с кодом (`src/**/*.spec.ts`), базы не нужно |
+| `npm run test:db:up` / `test:db:down` | поднять / остановить тестовую базу в Docker |
+| `npm run test:e2e` | сквозные тесты на настоящем приложении и тестовой базе |
+| `npm run migration:run` | применить миграции (нужен `DATABASE_URL`, сначала `npm run build`) |
+| `npm run migration:show` | какие миграции применены |
+| `npm run migration:revert` | откатить последнюю миграцию |
+| `npm run migration:create -- src/migrations/Имя` | новая пустая миграция |
+| `npm run backup` / `npm run restore -- файл` | копия базы и восстановление, см. [BACKUP.md](BACKUP.md) |
+| `node scripts/smoke.mjs [адрес]` | проверка работающего сервера (создаёт и удаляет тестовый аккаунт) |
+
+Схема базы меняется **только** миграциями (`synchronize` выключен), колонки в `snake_case`. В Docker-образе миграции применяются автоматически при каждом запуске.
+
+## Тесты
+
+```bash
+npm test                # быстрые, без базы
+npm run test:db:up      # один раз: тестовая база в Docker (порт 54330, данные в памяти)
+npm run test:e2e        # сквозные
+```
+
+Сквозные тесты запускают настоящее приложение (`AppModule`) на тестовой базе и ходят в него через HTTP и WebSocket. Они проверяют в том числе правила доступа (чужие данные не отдаются), защитные заголовки, лимиты, удаление аккаунта, обрыв базы (через прокси, который можно оборвать) и то, что в логах нет секретов. Перед тем как считать работу законченной: `npm run build`, `npm test`, `npm run test:e2e` зелёные и в `npm run lint` нет ошибок.
+
+## Как устроен API
+
+Формат — JSON, ключи в `snake_case` (кроме `accessToken`, `refreshToken`, `displayName`, `avatarUrl` в блоке входа). Все маршруты, **кроме** `/auth/*` и `/health*`, требуют заголовок `Authorization: Bearer <accessToken>`. `user_id` сервер всегда берёт из токена и никогда не верит тому, что прислал клиент.
+
+**Ошибки** всегда выглядят так: `{"code": "bad_code", "message": "…"}`. Код — английский `snake_case`, по нему приложение показывает текст по-русски. Статус `5xx` не раскрывает подробностей.
+
+### Вход и аккаунт
+
+| Запрос | Тело | Ответ |
+|---|---|---|
+| `POST /auth/register` | `{email, password}` (пароль 8–128 символов) | `201 {accessToken, refreshToken, user}` |
+| `POST /auth/login` | `{email, password}` | `200` то же |
+| `POST /auth/google` | `{idToken}` | `200` то же (и для нового, и для вернувшегося) |
+| `POST /auth/refresh` | `{refreshToken}` | `200 {accessToken, refreshToken}`; refresh-токен **одноразовый**: старый перестаёт работать |
+| `POST /auth/logout` | `{refreshToken}` | `204` (повтор тоже `204`) |
+| `GET /me` | — | `200 user` |
+| `PUT /me/profile` | `{displayName, avatarUrl}` (оба ключа обязательны, `null` очищает; ссылка только `https`) | `200 user` |
+| `DELETE /me` | `{password}` или `{idToken}` (свежий Google-токен) — ровно одно | `204`; см. ниже |
+| `PUT /devices` | `{token}` — токен FCM телефона | `204`; токен переходит к тому, кто вошёл на телефоне последним |
+| `DELETE /devices` | `{token}` | `204` (всегда) |
+
+`user` = `{id, email, displayName, avatarUrl}`. Access-токен живёт около часа, refresh — около 90 дней. Пароли хранятся только хешем (argon2id).
+
+**Удаление аккаунта** (`DELETE /me`) необратимо. Стирается всё личное: личные задачи и отметки, дневник, цикл, профиль, токены телефонов и сессии. Группы, которыми человек владел, удаляются; из остальных групп он выходит, а созданные им там задачи и отметки остаются у группы, без имени. Строка пользователя остаётся пустой оболочкой с выдуманной почтой — настоящую почту можно зарегистрировать заново. Повтор запроса безвреден. Уже выданный access-токен проверяется только по подписи, поэтому может ещё до часа открывать часть маршрутов.
+
+### Синхронизация
+
+Данные личных частей (задачи, отметки, дневник, цикл) и групповых задач передаются двумя маршрутами. Телефон — главный: он хранит всё у себя и пишет на сервер по мере сил, сервер лишь собирает и раздаёт.
+
+- **`POST /sync/push`** — телефон отправляет изменённые строки: `{tasks, logs, deleted, moods, tags, entries, cycle_days}` (любой из списков можно опустить; в каждом не больше 500 строк, размер тела до 5 МБ). Ответ `200 {rejected: [{table, id, reason}]}`: отказ по одной строке (`invalid_row`, `not_allowed`, `unknown_task`, …) **не валит остальные**. Сервер сам ставит время изменения `updated_at`; при конфликте выигрывает более свежее `client_updated_at`.
+- **`GET /sync/pull?since=<время>&include=tasks,diary,cycle&limit=500`** — телефон спрашивает всё, что изменилось после `since` (время `next` из прошлого ответа, пусто — всё). Ответ: списки строк и `next`, `has_more` (если `true` — повторить с `since=next`). Блок `groups` (группы и участники) приходит **целиком в каждом ответе**.
+- Заголовок `X-Device-Id: <имя телефона>` (1–64 символа `A-Za-z0-9_-`) сообщает серверу, какой телефон пишет: ему самому звонок не нужен.
+
+### Группы
+
+| Запрос | Что делает |
+|---|---|
+| `POST /groups` `{name}` | создать группу (создатель — владелец) → `201 {id}` |
+| `POST /groups/join` `{code}` | вступить по шестизначному коду → `200 {id}`; 10 неверных кодов в час на аккаунт, дальше `429` |
+| `GET /groups/:id/invite` | код приглашения (видит только владелец) |
+| `POST /groups/:id/invite/regenerate` | новый код, старый перестаёт работать |
+| `PATCH /groups/:id` `{name}` | переименовать (владелец) |
+| `POST /groups/:id/leave` | выйти (владелец выйти не может, только удалить группу) |
+| `DELETE /groups/:id/members/:memberId` | убрать участника (владелец) |
+| `DELETE /groups/:id` | удалить группу (владелец) |
+
+Чужая, удалённая или несуществующая группа отвечает одинаково (`404 not_found`), чтобы по ответу нельзя было узнать, есть ли она.
+
+### WebSocket «звонок»
+
+`wss://адрес/ws?token=<accessToken>&device=<имя телефона>` (`device` необязателен).
+
+- Сервер → телефон: `{"t":"changed"}` — «что-то изменилось, спроси». Данных не несёт; телефон делает обычный `pull`.
+- Телефон → сервер: `{"t":"ping"}` раз в ~4 минуты, ответ `{"t":"pong"}` (базу это не трогает).
+- Плохой или просроченный токен: сообщение `{"t":"unauthorized"}`, затем закрытие с кодом `4401`. Не больше 10 подключений на человека; не больше 60 новых подключений в минуту с одного адреса (сверх — обычный `429` ещё до рукопожатия).
+- Звонок уходит **после** успешной записи; если он сломался, запись это не отменяет.
+
+### Служебное
+
+- `GET /health` → `{"ok":true}`, **базу не трогает** (его можно спрашивать сколько угодно, Neon от этого не просыпается).
+- `GET /health/db` — проверка с запросом к базе; только вручную, не для регулярных пингов.
+
+### Коды ошибок
+
+`validation_failed`, `invalid_email`, `weak_password`, `email_taken` · `invalid_credentials`, `google_token_invalid`, `google_email_conflict`, `invalid_refresh_token`, `unauthorized`, `confirmation_required` · `not_found`, `not_owner`, `owner_cannot_leave`, `bad_code`, `bad_token` · `batch_too_large`, `payload_too_large`, `too_many_requests` · `db_unavailable` (**`503`**: база недоступна, есть заголовок `Retry-After` — подождать и повторить запрос), `internal_error`.
+
+Лимиты частоты считаются по адресу клиента: общие 120 запросов в минуту и 3000 в час на маршрут, на `/auth/*` строже (10 в минуту и 60 в час), на `DELETE /me` ещё строже (5 в минуту и 20 в час). Ответ `429`, подробности в заголовках `Retry-After-…`.
+
+## Правила, которые нельзя нарушать
+
+Сервер рассчитан на бесплатные тарифы. Нарушение этих правил ломает хостинг или утечка данных:
+
+- **Ничего не трогает базу само по времени**: никаких cron, таймеров, опросов. Бесплатная база Neon засыпает через 5 минут без запросов, и именно это экономит её часы. Всё событийное.
+- `GET /health` и ответ `pong` **не обращаются к базе**.
+- **Ничего не пишется на диск**: диск на Render временный.
+- Схема меняется только миграциями; одна и та же работа по записи не должна ломать остальную.
+- Никаких секретов в репозитории и в логах (пароли, токены, ключ Firebase, адрес сокета с `?token=`).
+- Один процесс сервера: список подключений WebSocket и счётчики лимитов лежат в его памяти.
+
+## Деплой на Render + Neon
+
+Бесплатный вариант: сервер на **Render** (Web Service), база на **Neon**.
+
+1. **База (Neon).** Создайте проект, скопируйте строку подключения **с пулером** (Pooled connection; в имени хоста `-pooler`). В ней должно быть `sslmode=require`. Это ваш `DATABASE_URL`.
+2. **Сервис (Render).** *New → Web Service* → подключите репозиторий → **Language: Docker** (Render найдёт `Dockerfile`) → тариф Free. Ветка — основная (`main`); автодеплой при каждом пуше включён по умолчанию.
+3. **Environment** (переменные сервиса): `DATABASE_URL`, `JWT_SECRET`, `NODE_ENV=production`, `TRUST_PROXY_HOPS=3`; по желанию `GOOGLE_CLIENT_IDS` и `FIREBASE_SERVICE_ACCOUNT`. Порт не нужен (Render задаёт `PORT`).
+4. **Health Check Path:** `/health` (в настройках сервиса).
+5. После первого деплоя Render покажет адрес вида `https://имя.onrender.com`. Добавьте его в `SELF_PING_URL`, сохраните — сервис перезапустится. Теперь он сам обращается к `/health` раз в 5 минут и не засыпает.
+6. Проверка: `node scripts/smoke.mjs https://имя.onrender.com` (после сна первый запрос может идти около минуты).
+
+Миграции применяются сами при каждом запуске образа (`Dockerfile` перед стартом выполняет `npm run migration:run`). Поэтому порядок выкладки изменения базы простой: запушить код — Render соберёт образ, применит миграцию и запустит новую версию.
+
+Ограничения бесплатного Render: **750 часов в месяц на аккаунт**. Один сервис, который не спит, расходует около 24 часов в сутки, то есть почти весь лимит месяца — второй сервис добавлять нельзя. Без самопинга сервис засыпает через 15 минут без запросов, и первый запрос будит его минуту.
+
+## Переезд на свой сервер (VPS)
+
+VPS — арендованный компьютер в интернете, где вы сами запускаете Docker. Всё, что нужно, лежит в [`deploy/`](deploy): `docker-compose.vps.yml` запускает три контейнера — сам сервер, свою базу PostgreSQL и **Caddy** (он сам получает и обновляет HTTPS-сертификат и пропускает WebSocket). Из интернета виден только Caddy.
+
+**Что нужно:** сервер с Linux и установленными Docker и Docker Compose; доменное имя, A-запись которого указывает на сервер; открытые порты 80 и 443 (например, `sudo ufw allow 80,443/tcp`).
+
+```bash
+git clone https://github.com/AnastasiaPeretyatko/nook_back.git
+cd nook_back/deploy
+cp .env.example .env
+nano .env          # DOMAIN, POSTGRES_PASSWORD, JWT_SECRET (подсказки внутри файла)
+docker compose -f docker-compose.vps.yml up -d --build
+```
+
+Первый запуск собирает образ — несколько минут. Миграции применяются сами. Проверка:
+
+```bash
+curl https://ваш-домен/health
+node scripts/smoke.mjs https://ваш-домен    # из папки проекта на любом компьютере с Node
+docker compose -f docker-compose.vps.yml logs -f app
+```
+
+**Перенос данных с Neon.** Сначала сделайте копию на своём компьютере ([BACKUP.md](BACKUP.md)): `npm run backup`. Затем на сервере запустите **только базу**, восстановите копию в неё (восстановление принимает только пустую базу, поэтому ДО запуска сервера, который при старте создаёт таблицы), и только потом поднимите остальное:
+
+```bash
+docker compose -f docker-compose.vps.yml up -d postgres
+RESTORE_DATABASE_URL='postgresql://nook:ПАРОЛЬ@127.0.0.1:5432/nook' npm run restore -- nook-….dump
+docker compose -f docker-compose.vps.yml up -d --build
+```
+
+(`ПАРОЛЬ` — `POSTGRES_PASSWORD` из `deploy/.env`. База слушает только `127.0.0.1` самого сервера, снаружи её не видно. Копию надо перенести на сервер, например через `scp`.) Затем в приложении поменяйте адрес сервера на новый. Старый Render и Neon оставьте на время, пока не убедитесь, что всё работает.
+
+**Что важно знать при переезде:**
+
+- **`TRUST_PROXY_HOPS=1`** — между интернетом и сервером один прокси (Caddy). Он подставляет настоящий адрес клиента и заменяет выдуманный клиентом. Compose уже ставит это значение; если добавите ещё один прокси (например, Cloudflare), поправьте число и проверьте способом из раздела про переменные.
+- **`SELF_PING_URL` не задавать.** Свой сервер не засыпает, самопинг не нужен.
+- **WebSocket** через Caddy заработает без дополнительных настроек. Если поставите другой прокси (nginx), ему нужны заголовки `Upgrade` и `Connection` и длинный таймаут чтения (минуты, не секунды).
+- **Один процесс.** Не запускайте две копии сервера за балансировщиком: список подключений WebSocket лежит в памяти одного процесса, и звонок до телефона, подключённого ко второй копии, не дойдёт; счётчики лимитов тоже не общие. Если нужен второй сервер, придётся сначала сделать общий канал (например, Postgres `LISTEN/NOTIFY`).
+- **База без шифрования внутри Docker — это нормально:** она в одной закрытой сети с сервером. Сервер разрешает так делать только для хоста без точек в имени (`postgres`) или `localhost`; к любому внешнему адресу по-прежнему требует `sslmode=require`.
+- **Обновление:** `git pull`, затем `docker compose -f docker-compose.vps.yml up -d --build`. Миграции применятся при старте.
+- **Копии на сервере:** `npm run backup` работает и там (клиент PostgreSQL 16+ и `BACKUP_DATABASE_URL='postgresql://nook:ПАРОЛЬ@127.0.0.1:5432/nook'`). Регулярность (например, cron) — на вашей стороне, сам сервер по расписанию ничего не делает.
+
+## Резервные копии
+
+Neon на бесплатном тарифе помнит историю базы 6 часов. Для своих копий — `npm run backup` (файл вне репозитория, права только ваши) и `npm run restore -- файл` (только в пустую базу, с проверкой числа строк). Подробная инструкция, что делать при ошибке, и частые сбои — в [BACKUP.md](BACKUP.md). Файл копии содержит личные данные пользователей: храните как пароль.
+
+## Частые ошибки
+
+| Что видно | Причина и что делать |
+|---|---|
+| Сервер не стартует: `Invalid environment variables: …` | прочитайте сообщение: не хватает `DATABASE_URL` или `JWT_SECRET`, `JWT_SECRET` короче 32 символов, ключ Firebase сломан |
+| `DATABASE_URL must contain sslmode=require in production` | в продакшене адрес базы без шифрования допустим только для базы на этом же компьютере или в сети Docker; для Neon добавьте `?sslmode=require` |
+| `RATE_LIMIT=off is not allowed in production` | уберите `RATE_LIMIT` из переменных |
+| `Could not set up the test database` (в тестах) | не запущена тестовая база: `npm run test:db:up` |
+| `Refusing to run tests against non-local database host` | тесты очищают базу, поэтому работают только с локальной; проверьте `TEST_DATABASE_URL` |
+| После деплоя всех «выкинуло» на экран входа | поменялся `JWT_SECRET`; приложение должно само обновить пропуска, иначе — войти заново |
+| `401 unauthorized` через час после входа | пропуск (access-токен) живёт час; приложение должно вызвать `POST /auth/refresh` и повторить запрос |
+| `429 too_many_requests` у всех пользователей сразу | неверный `TRUST_PROXY_HOPS` (слишком маленький): сервер думает, что все пользователи — один адрес |
+| `503 db_unavailable` | база недоступна или просыпается (Neon после сна — несколько секунд); подождать `Retry-After` секунд и повторить |
+| Первый запрос после простоя идёт долго | Render проснулся (до минуты) и/или Neon проснулся; задайте `SELF_PING_URL`, чтобы Render не спал |
+| Звонок по WebSocket не приходит | сокет мог оборваться (прокси); телефон должен переподключаться при любом обрыве и после подключения делать `pull`. Через прокси Render закрытие, начатое сервером, до клиента не доходит — о плохом токене сообщает сообщение `unauthorized` |
+| Caddy не получает сертификат | домен не указывает на сервер или закрыты порты 80/443; смотрите `docker compose -f docker-compose.vps.yml logs caddy` |
+| `address already in use` при запуске примера на своём компьютере | заняты порты 80, 443 или 5432: задайте `HTTP_PORT`, `HTTPS_PORT`, `POSTGRES_HOST_PORT` в `deploy/.env` |
+| `that database is not empty` при восстановлении | восстанавливать можно только в пустую базу, а сервер при старте создаёт таблицы; восстановите до запуска сервера (см. «Перенос данных») |

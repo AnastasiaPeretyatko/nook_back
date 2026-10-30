@@ -7,6 +7,7 @@ import { AppModule } from '../../src/app.module';
 import {
   configureBodyLimit,
   configureProxy,
+  configureSecurity,
   configureWebSocket,
 } from '../../src/app.setup';
 import { assertLocalDatabase } from './test-env';
@@ -31,6 +32,7 @@ export async function createTestApp(
     throw error;
   }
   const app = moduleRef.createNestApplication<NestExpressApplication>();
+  configureSecurity(app);
   configureProxy(app, trustProxyHops);
   configureBodyLimit(app);
   configureWebSocket(app);

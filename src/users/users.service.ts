@@ -42,10 +42,32 @@ export class UsersService {
     const [row] = await this.dataSource.query<UserRow[]>(
       `select u.id, u.email, u.password_hash, p.display_name, p.avatar_url
        from users u left join profiles p on p.user_id = u.id
-       where u.${column} = $1`,
+       where u.${column} = $1 and u.deleted_at is null`,
       [value],
     );
     return row ? toUser(row) : null;
+  }
+
+  // What deleting an account must check: how the person proves it is them. `gone` = the account
+  // was deleted already (a shell). Null = no such row at all.
+  async findCredentials(id: string) {
+    const [row] = await this.dataSource.query<
+      {
+        password_hash: string | null;
+        google_sub: string | null;
+        gone: boolean;
+      }[]
+    >(
+      `select password_hash, google_sub, deleted_at is not null as gone from users where id = $1`,
+      [id],
+    );
+    return row
+      ? {
+          passwordHash: row.password_hash,
+          googleSub: row.google_sub,
+          gone: row.gone,
+        }
+      : null;
   }
 
   findByEmail(email: string) {
@@ -105,7 +127,7 @@ export class UsersService {
     return after;
   }
 
-  private noSuchUser() {
+  noSuchUser() {
     return new UnauthorizedException({
       code: 'unauthorized',
       message: 'Missing or invalid access token',

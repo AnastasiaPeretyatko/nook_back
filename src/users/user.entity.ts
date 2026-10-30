@@ -14,7 +14,7 @@ import {
 @Check('users_email_lowercase', 'email = lower(email)')
 @Check(
   'users_has_credential',
-  'password_hash is not null or google_sub is not null',
+  'password_hash is not null or google_sub is not null or deleted_at is not null',
 )
 export class User {
   @PrimaryGeneratedColumn('uuid', { primaryKeyConstraintName: 'users_pkey' })
@@ -34,4 +34,8 @@ export class User {
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
+
+  // Set when the account was deleted (B8.5): the row stays as an empty shell, see the migration.
+  @Column({ type: 'timestamptz', nullable: true })
+  deletedAt: Date | null;
 }

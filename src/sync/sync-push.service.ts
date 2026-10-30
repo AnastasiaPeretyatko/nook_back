@@ -21,6 +21,7 @@ import {
 } from './push-rows';
 import { Rejection } from './rejection';
 import { TaskWriter } from './task-writer';
+import { errorText } from '../common/error-text';
 
 export interface PushResult {
   rejected: Rejection[];
@@ -184,7 +185,7 @@ export class SyncPushService {
       );
       this.realtime.ring(members.map((m) => m.user_id));
     } catch (error) {
-      this.logger.warn(`Ring failed: ${(error as Error).message}`);
+      this.logger.warn(`Ring failed: ${errorText(error)}`);
     }
   }
 }

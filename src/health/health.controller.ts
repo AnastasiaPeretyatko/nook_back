@@ -7,6 +7,7 @@ import {
 import { SkipThrottle } from '@nestjs/throttler';
 import { DataSource } from 'typeorm';
 import { Public } from '../auth/public.decorator';
+import { errorStack } from '../common/error-text';
 
 // Render's health checks and our own ping come from one address, often.
 @SkipThrottle({ burst: true, sustained: true }) // by name: a bare @SkipThrottle() only skips "default"
@@ -29,7 +30,7 @@ export class HealthController {
     try {
       await this.dataSource.query('select 1');
     } catch (error) {
-      this.logger.error('Database check failed', (error as Error).stack);
+      this.logger.error('Database check failed', errorStack(error));
       throw new ServiceUnavailableException({
         code: 'db_unavailable',
         message: 'Database is unavailable',

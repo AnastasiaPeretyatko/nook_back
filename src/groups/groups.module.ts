@@ -20,6 +20,6 @@ import { GroupsService } from './groups.service';
   ],
   controllers: [GroupsController],
   providers: [GroupsService],
-  exports: [TypeOrmModule],
+  exports: [TypeOrmModule, GroupsService],
 })
 export class GroupsModule {}

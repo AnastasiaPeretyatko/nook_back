@@ -1,0 +1,8 @@
+# Caddy gets and renews the HTTPS certificate by itself for the domain in DOMAIN (the domain
+# must already point at this server, and ports 80 and 443 must be open).
+# WebSocket (/ws) needs no extra lines: Caddy passes the upgrade through. Caddy puts the real
+# client address into X-Forwarded-For (and replaces one the client made up), which is why the
+# app runs with TRUST_PROXY_HOPS=1.
+{$DOMAIN} {
+	reverse_proxy app:3000
+}

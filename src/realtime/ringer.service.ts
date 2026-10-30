@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { RealtimeService } from './realtime.service';
+import { errorText } from '../common/error-text';
 
 interface Audience {
   // Everyone now in these groups.
@@ -51,7 +52,7 @@ export class Ringer {
       heard.delete(senderId);
       this.realtime.ring(heard);
     } catch (error) {
-      this.logger.warn(`Ring failed: ${(error as Error).message}`);
+      this.logger.warn(`Ring failed: ${errorText(error)}`);
     }
   }
 }

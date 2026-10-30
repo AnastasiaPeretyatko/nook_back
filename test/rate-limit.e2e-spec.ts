@@ -49,6 +49,22 @@ describe('Rate limiting', () => {
     expect(Number(blocked.headers['retry-after-burst'])).toBeGreaterThan(0);
   });
 
+  it('allows 5 account-deletion attempts a minute, then answers 429: a stolen token must not guess the password', async () => {
+    await start();
+    const res = await api()
+      .post('/auth/register')
+      .send({ email: 'ann@example.com', password: 'correct horse' })
+      .expect(201);
+    const token = (res.body as { accessToken: string }).accessToken;
+    const wrongDelete = () =>
+      api()
+        .delete('/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ password: 'wrong password' });
+    expect(await statuses(5, wrongDelete)).toEqual(Array(5).fill(401));
+    await wrongDelete().expect(429);
+  });
+
   it('counts each route separately', async () => {
     await start();
     await statuses(11, () => wrongLogin());

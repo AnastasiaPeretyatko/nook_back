@@ -72,6 +72,22 @@ export class EnvironmentVariables {
   RATE_LIMIT: string = 'on';
 }
 
+// localhost, or a plain name without dots that must contain a letter ("postgres": a container on
+// the same network). Public names always have dots; all-digit names are numeric addresses in
+// disguise (2130706433 is 127.0.0.1 to the resolver, and so could be any public address).
+function isLocalDatabase(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return (
+      host === '127.0.0.1' ||
+      host === '[::1]' ||
+      /^(?=.*[a-z])[a-z0-9_-]+$/i.test(host)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function validateEnv(config: Record<string, unknown>) {
   const env = plainToInstance(EnvironmentVariables, config, {
     enableImplicitConversion: true,
@@ -96,12 +112,14 @@ export function validateEnv(config: Record<string, unknown>) {
     env.FIREBASE_SERVICE_ACCOUNT = undefined; // blank counts as not set
   }
   // pg turns TLS on only through ?sslmode= in the URL; without it the link would be plain text.
+  // Only a database on the same machine (or in the same Docker network) may go without it.
   if (
     env.NODE_ENV === 'production' &&
-    !/[?&]sslmode=(require|verify-ca|verify-full)\b/.test(env.DATABASE_URL)
+    !/[?&]sslmode=(require|verify-ca|verify-full)\b/.test(env.DATABASE_URL) &&
+    !isLocalDatabase(env.DATABASE_URL)
   ) {
     throw new Error(
-      'Invalid environment variables:\n  DATABASE_URL must contain sslmode=require in production',
+      'Invalid environment variables:\n  DATABASE_URL must contain sslmode=require in production (plain text is allowed only for localhost or a host name without dots, like a Docker service)',
     );
   }
   if (env.NODE_ENV === 'production' && env.RATE_LIMIT === 'off') {
