@@ -148,6 +148,7 @@ describe('GET /sync/pull with the cycle', () => {
       const { updated_at, ...rest } = row;
       expect(rest).toEqual({
         date: dayN(15),
+        is_period: true,
         flow: 3,
         mood: 5,
         symptoms: [0, 4, 8],
@@ -174,6 +175,7 @@ describe('GET /sync/pull with the cycle', () => {
       const [row] = (await pull(ann)).cycle_days!;
       expect(row).toMatchObject({
         date: dayN(15),
+        is_period: false,
         flow: 0,
         mood: null,
         symptoms: [],
@@ -197,12 +199,23 @@ describe('GET /sync/pull with the cycle', () => {
       expect(res.cycle_days).toEqual([
         expect.objectContaining({
           date: dayN(15),
+          is_period: false,
           flow: 0,
           mood: null,
           symptoms: [],
           note: null,
         }),
       ]);
+    });
+
+    it('keeps a period mark whose intensity was not specified', async () => {
+      await push(ann, {
+        cycle_days: [{ date: dayN(15), is_period: true, flow: 0 }],
+      });
+      expect((await pull(ann)).cycle_days![0]).toMatchObject({
+        is_period: true,
+        flow: 0,
+      });
     });
 
     it('keeps text exactly: quotes, backslashes, newlines, emoji', async () => {

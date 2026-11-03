@@ -694,6 +694,7 @@ describe('parseCycleDay', () => {
         parseCycleDay({
           user_id: ID,
           date: DAY,
+          is_period: true,
           flow: 3,
           mood: 5,
           symptoms: [0, 4, 8],
@@ -706,6 +707,7 @@ describe('parseCycleDay', () => {
       ),
     ).toEqual({
       date: DAY,
+      isPeriod: true,
       flow: 3,
       mood: 5,
       symptoms: [0, 4, 8],
@@ -720,6 +722,7 @@ describe('parseCycleDay', () => {
   it('fills defaults when only the day is given: that is an empty day', () => {
     expect(rowOf(parseCycleDay(cycle()))).toMatchObject({
       date: DAY,
+      isPeriod: false,
       flow: 0,
       mood: null,
       symptoms: [],
@@ -727,6 +730,20 @@ describe('parseCycleDay', () => {
       sex: null,
       pill: false,
       note: null,
+    });
+  });
+
+  it('allows a period day without a specified intensity', () => {
+    expect(rowOf(parseCycleDay(cycle({ is_period: true })))).toMatchObject({
+      isPeriod: true,
+      flow: 0,
+    });
+  });
+
+  it('infers the period mark from flow for old clients', () => {
+    expect(rowOf(parseCycleDay(cycle({ flow: 2 })))).toMatchObject({
+      isPeriod: true,
+      flow: 2,
     });
   });
 
@@ -792,6 +809,9 @@ describe('parseCycleDay', () => {
       ['a null flow', { flow: null }],
       ['a flow that is a string', { flow: '1' }],
       ['a flow that is not whole', { flow: 1.5 }],
+      ['a positive flow outside a period', { is_period: false, flow: 1 }],
+      ['a null period mark', { is_period: null }],
+      ['a non-boolean period mark', { is_period: 1 }],
       ['a mood of -1', { mood: -1 }],
       ['a mood of 6', { mood: 6 }],
       ['a discharge of -1', { discharge: -1 }],

@@ -75,7 +75,7 @@ describe('POST /sync/push with the cycle', () => {
 
   const cycleOf = (userId: string): Promise<Record<string, unknown>[]> =>
     ds.query(
-      `select date::text as day, flow, mood, symptoms, discharge, sex, pill, note
+      `select date::text as day, is_period, flow, mood, symptoms, discharge, sex, pill, note
        from cycle_days where user_id = $1 order by date`,
       [userId],
     );
@@ -102,6 +102,7 @@ describe('POST /sync/push with the cycle', () => {
     expect(await cycleOf(ann.id)).toEqual([
       {
         day: '2026-01-15',
+        is_period: true,
         flow: 3,
         mood: 2,
         symptoms: [1, 5],
@@ -112,6 +113,7 @@ describe('POST /sync/push with the cycle', () => {
       },
       {
         day: '2026-01-16',
+        is_period: false,
         flow: 0,
         mood: null,
         symptoms: [],

@@ -8,17 +8,17 @@ import { CycleDayRow } from './push-rows';
 // the other devices, so it is stored like any other.
 const UPSERT = `
   insert into cycle_days (
-    user_id, date, flow, mood, symptoms, discharge, sex, pill, note, client_updated_at
+    user_id, date, is_period, flow, mood, symptoms, discharge, sex, pill, note, client_updated_at
   )
   select
-    $2::uuid, r.date, r.flow, r.mood, r.symptoms, r.discharge, r.sex, r.pill, r.note,
+    $2::uuid, r.date, r."isPeriod", r.flow, r.mood, r.symptoms, r.discharge, r.sex, r.pill, r.note,
     r."clientUpdatedAt"
   from jsonb_to_recordset($1::jsonb) as r(
-    date date, flow smallint, mood smallint, symptoms smallint[], discharge smallint,
+    date date, "isPeriod" boolean, flow smallint, mood smallint, symptoms smallint[], discharge smallint,
     sex smallint, pill boolean, note text, "clientUpdatedAt" timestamptz
   )
   on conflict (user_id, date) do update set
-    flow = excluded.flow, mood = excluded.mood, symptoms = excluded.symptoms,
+    is_period = excluded.is_period, flow = excluded.flow, mood = excluded.mood, symptoms = excluded.symptoms,
     discharge = excluded.discharge, sex = excluded.sex, pill = excluded.pill,
     note = excluded.note, client_updated_at = excluded.client_updated_at
 `;

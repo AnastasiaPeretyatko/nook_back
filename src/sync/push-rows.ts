@@ -42,10 +42,11 @@ export interface LogRow {
 }
 
 // A day of the cycle calendar. The row's key is the day itself (with the user from the token), so
-// there is no id and no user_id. An empty day (flow 0, nothing marked) is a real row: it is how
+// there is no id and no user_id. An empty day (not a period, nothing marked) is a real row: it is how
 // a taken-back mark reaches the other devices.
 export interface CycleDayRow {
   date: string;
+  isPeriod: boolean;
   flow: number;
   mood: number | null;
   symptoms: number[];
@@ -365,22 +366,30 @@ export function parseCycleDay(raw: unknown): RowResult<CycleDayRow> {
   return parse(
     raw,
     'date',
-    (f) => ({
-      date: req(f, 'date', day),
-      flow: def(f, 'flow', int(0, 4), 0),
-      mood: opt(f, 'mood', int(0, 5)),
-      symptoms: def(f, 'symptoms', symptomList, []),
-      discharge: opt(f, 'discharge', int(0, 6)),
-      sex: opt(f, 'sex', int(0, 2)),
-      pill: def(f, 'pill', bool, false),
-      note: opt(f, 'note', text(MAX_NOTE)),
-      clientUpdatedAt: def(
-        f,
-        'client_updated_at',
-        instant,
-        new Date().toISOString(),
-      ),
-    }),
+    (f) => {
+      const flow = def(f, 'flow', int(0, 4), 0);
+      // Old clients only sent flow. Infer the period mark for them so a rolling
+      // upgrade does not lose already entered days.
+      const isPeriod = def(f, 'is_period', bool, flow > 0);
+      if (!isPeriod && flow > 0) fail();
+      return {
+        date: req(f, 'date', day),
+        isPeriod,
+        flow,
+        mood: opt(f, 'mood', int(0, 5)),
+        symptoms: def(f, 'symptoms', symptomList, []),
+        discharge: opt(f, 'discharge', int(0, 6)),
+        sex: opt(f, 'sex', int(0, 2)),
+        pill: def(f, 'pill', bool, false),
+        note: opt(f, 'note', text(MAX_NOTE)),
+        clientUpdatedAt: def(
+          f,
+          'client_updated_at',
+          instant,
+          new Date().toISOString(),
+        ),
+      };
+    },
     dayIdOf,
   );
 }

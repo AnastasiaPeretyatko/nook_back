@@ -78,7 +78,7 @@ const ENTRY_COLUMNS = `
 // A day of the cycle, in the shape of the plan (4.2): no user_id. An empty day is a row like any
 // other. Symptoms leave as a list of numbers (the pg driver reads smallint[] that way).
 const CYCLE_COLUMNS = `
-  ${day('date')} as date, flow, mood, symptoms, discharge, sex, pill, note,
+  ${day('date')} as date, is_period, flow, mood, symptoms, discharge, sex, pill, note,
   ${iso('client_updated_at')} as client_updated_at, ${iso('updated_at')} as updated_at`;
 
 // One kind of rows in the answer. `owner` picks the caller's rows; the starter moods have no

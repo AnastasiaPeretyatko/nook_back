@@ -49,7 +49,7 @@ describe('CycleWriter', () => {
   // Days and moments are read back as text: a JS Date would lose the day's zone or the microseconds.
   const allDays = (): Promise<Record<string, unknown>[]> =>
     ds.query(
-      `select user_id, date::text as day, flow, mood, symptoms, discharge, sex, pill, note,
+      `select user_id, date::text as day, is_period, flow, mood, symptoms, discharge, sex, pill, note,
               client_updated_at::text as client_updated_at
        from cycle_days order by user_id, date`,
     );
@@ -71,6 +71,7 @@ describe('CycleWriter', () => {
       {
         user_id: ann,
         day: '2026-01-15',
+        is_period: true,
         flow: 3,
         mood: 5,
         symptoms: [0, 4, 8],
@@ -104,6 +105,7 @@ describe('CycleWriter', () => {
       expect(await allDays()).toEqual([
         expect.objectContaining({
           day: '2026-01-15',
+          is_period: false,
           flow: 0,
           mood: null,
           symptoms: [],
@@ -121,6 +123,7 @@ describe('CycleWriter', () => {
       const rows = await allDays();
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({
+        is_period: false,
         flow: 0,
         mood: null,
         symptoms: [],
@@ -130,6 +133,13 @@ describe('CycleWriter', () => {
         note: null,
       });
     });
+  });
+
+  it('stores a period day without inventing an intensity', async () => {
+    await write(ann, [day('2026-01-15', { is_period: true })]);
+    expect(await allDays()).toEqual([
+      expect.objectContaining({ is_period: true, flow: 0 }),
+    ]);
   });
 
   describe('updating', () => {

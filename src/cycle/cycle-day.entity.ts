@@ -44,6 +44,9 @@ export class CycleDay {
   })
   date: string;
 
+  @Column({ name: 'is_period', type: 'boolean', default: false })
+  isPeriod: boolean;
+
   @Column({ type: 'smallint', default: 0 })
   flow: number;
 
