@@ -4,6 +4,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Length,
   Max,
   MaxLength,
@@ -18,6 +19,10 @@ const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
 export class CreateProjectDto {
+  @IsOptional()
+  @IsUUID()
+  id?: string;
+
   @Transform(trim)
   @IsString()
   @Length(1, 100)

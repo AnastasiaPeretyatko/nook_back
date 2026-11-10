@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import {
@@ -54,6 +58,24 @@ export class ProjectsService {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   async create(userId: string, dto: CreateProjectDto): Promise<ProjectRow> {
+    if (dto.id) {
+      await this.dataSource.query(
+        `insert into projects (id, user_id, name, description, color)
+         values ($1, $2, $3, $4, $5) on conflict (id) do nothing`,
+        [dto.id, userId, dto.name, dto.description ?? null, dto.color ?? null],
+      );
+      const [owner] = await this.dataSource.query<{ user_id: string }[]>(
+        `select user_id from projects where id = $1`,
+        [dto.id],
+      );
+      if (!owner || owner.user_id !== userId) {
+        throw new ConflictException({
+          code: 'id_taken',
+          message: 'Project id unavailable',
+        });
+      }
+      return this.detail(userId, dto.id);
+    }
     const [created] = await this.dataSource.query<{ id: string }[]>(
       `insert into projects (user_id, name, description, color)
        values ($1, $2, $3, $4) returning id`,

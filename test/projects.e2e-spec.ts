@@ -84,6 +84,17 @@ describe('Projects', () => {
   afterAll(() => app.close());
 
   describe('projects CRUD', () => {
+    it('accepts a client identity and safely retries creation', async () => {
+      const projectId = id(100);
+      const body = { id: projectId, name: 'Offline project' };
+      const first = (await create(ann, body).expect(201)).body as ProjectRow;
+      const retry = (await create(ann, body).expect(201)).body as ProjectRow;
+      expect(first.id).toBe(projectId);
+      expect(retry.id).toBe(projectId);
+      expect((await list(ann).expect(200)).body).toHaveLength(1);
+      await create(bob, body).expect(409);
+    });
+
     it('creates a project for the signed-in user and never trusts a user id from the body', async () => {
       const project = (
         await create(ann, {
