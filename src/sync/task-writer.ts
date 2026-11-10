@@ -9,14 +9,14 @@ import { Rejection } from './rejection';
 // the cycle check sees the tree as stored. The climb only follows the caller's own tasks.
 const FIND_KNOWN = `
   with recursive up as (
-    select id, user_id, parent_id, group_id, deleted_at is not null as deleted
+    select id, user_id, parent_id, group_id, project_id, deleted_at is not null as deleted
     from tasks where id = any($1::uuid[])
     union
-    select t.id, t.user_id, t.parent_id, t.group_id, t.deleted_at is not null
+    select t.id, t.user_id, t.parent_id, t.group_id, t.project_id, t.deleted_at is not null
     from tasks t join up on t.id = up.parent_id
     where up.user_id = $2 and t.user_id = $2
   )
-  select id, user_id, parent_id, group_id, deleted from up
+  select id, user_id, parent_id, group_id, project_id, deleted from up
 `;
 
 // What the caller is to each of these groups, for the groups that exist and are not deleted.
@@ -26,6 +26,11 @@ const FIND_GROUPS = `
   left join group_members m
     on m.group_id = g.id and m.user_id = $2 and m.deleted_at is null
   where g.id = any($1::uuid[]) and g.deleted_at is null
+`;
+
+const FIND_PROJECTS = `
+  select id, archived_at is not null as archived
+  from projects where id = any($1::uuid[]) and user_id = $2
 `;
 
 // One statement for the whole batch: the rows travel as one JSON value, which keeps the number
@@ -49,7 +54,7 @@ const UPSERT = `
       "targetDurationMinutes" integer, "targetValue" double precision, "iconKey" text,
       "colorKey" text, "scheduledTimeMinutes" integer, "endTimeMinutes" integer,
       "startDate" date, "createdAt" timestamptz, "clientUpdatedAt" timestamptz,
-      "groupId" uuid, "assigneeId" uuid
+      "groupId" uuid, "assigneeId" uuid, "projectId" uuid, "projectIdSpecified" boolean
     )
   ),
   before as (
@@ -60,15 +65,20 @@ const UPSERT = `
       id, user_id, parent_id, title, description, status, repeat_type, repeat_interval,
       repeat_days_mask, tracking_mode, target_duration_minutes, target_value, icon_key,
       color_key, scheduled_time_minutes, end_time_minutes, start_date, created_at,
-      client_updated_at, group_id, assignee_id
+      client_updated_at, group_id, assignee_id, project_id
     )
     select
       r.id, $2::uuid, r."parentId", r.title, r.description, r.status, r."repeatType",
       r."repeatInterval", r."repeatDaysMask", r."trackingMode", r."targetDurationMinutes",
       r."targetValue", r."iconKey", r."colorKey", r."scheduledTimeMinutes", r."endTimeMinutes",
-      r."startDate", r."createdAt", r."clientUpdatedAt", r."groupId", r."assigneeId"
+      r."startDate", r."createdAt", r."clientUpdatedAt", r."groupId", r."assigneeId",
+      r."projectId"
     from src r
-    where r."groupId" is null or is_group_member(r."groupId", $2::uuid)
+    where (r."groupId" is null or is_group_member(r."groupId", $2::uuid))
+      and (r."projectId" is null or r."projectIdSpecified" = false or exists (
+        select 1 from projects p where p.id = r."projectId" and p.user_id = $2::uuid
+          and p.archived_at is null
+      ))
     on conflict (id) do update set
       parent_id = excluded.parent_id, title = excluded.title,
       description = excluded.description, status = excluded.status,
@@ -78,7 +88,8 @@ const UPSERT = `
       target_value = excluded.target_value, icon_key = excluded.icon_key,
       color_key = excluded.color_key, scheduled_time_minutes = excluded.scheduled_time_minutes,
       end_time_minutes = excluded.end_time_minutes, start_date = excluded.start_date,
-      client_updated_at = excluded.client_updated_at, assignee_id = excluded.assignee_id
+      client_updated_at = excluded.client_updated_at, assignee_id = excluded.assignee_id,
+      project_id = excluded.project_id
     where (tasks.group_id is null and tasks.user_id = $2::uuid)
       or (tasks.group_id is not null
           and is_group_member(tasks.group_id, $2::uuid)
@@ -113,6 +124,7 @@ interface KnownTaskRow {
   user_id: string;
   parent_id: string | null;
   group_id: string | null;
+  project_id: string | null;
   deleted: boolean;
 }
 
@@ -141,6 +153,7 @@ export class TaskWriter {
       userId: k.user_id,
       parentId: k.parent_id,
       groupId: k.group_id,
+      projectId: k.project_id,
       deleted: k.deleted,
     }));
 
@@ -154,9 +167,43 @@ export class TaskWriter {
         : [];
 
     const { write, rejected } = planTaskWrites(rows, userId, known, groups);
-    if (write.length > 0) {
+    const projectIds = new Set(
+      write
+        .map((row) => row.projectId)
+        .filter((id): id is string => id !== null),
+    );
+    const projects: { id: string; archived: boolean }[] =
+      projectIds.size > 0
+        ? await manager.query(FIND_PROJECTS, [[...projectIds], userId])
+        : [];
+    const projectAccess = new Map(
+      projects.map((project) => [project.id, project]),
+    );
+    const accepted = write.filter((row) => {
+      if (row.projectId === null) return true;
+      const project = projectAccess.get(row.projectId);
+      if (!project) {
+        rejected.push({
+          table: 'tasks',
+          id: row.id,
+          reason: 'unknown_project',
+        });
+        return false;
+      }
+      // An archived project keeps its existing tasks, but cannot be explicitly selected again.
+      if (project.archived && row.projectIdSpecified) {
+        rejected.push({
+          table: 'tasks',
+          id: row.id,
+          reason: 'archived_project',
+        });
+        return false;
+      }
+      return true;
+    });
+    if (accepted.length > 0) {
       const written: WrittenGroupTask[] = await manager.query(UPSERT, [
-        JSON.stringify(write),
+        JSON.stringify(accepted),
         userId,
       ]);
       for (const t of written) {

@@ -8,6 +8,7 @@ import {
   PrimaryColumn,
 } from 'typeorm';
 import { Group } from '../groups/group.entity';
+import { Project } from '../projects/project.entity';
 import { User } from '../users/user.entity';
 
 // The schema itself lives in the migration (checks, triggers, deferred key included); this class only maps it.
@@ -15,6 +16,7 @@ import { User } from '../users/user.entity';
 @Index('tasks_user_updated_idx', ['userId', 'updatedAt'])
 @Index('tasks_parent_id_idx', ['parentId'])
 @Index('tasks_group_updated_idx', ['groupId', 'updatedAt'])
+@Index('tasks_project_id_idx', ['projectId'])
 @Check('tasks_status_check', "status in ('active', 'paused', 'archived')")
 @Check(
   'tasks_repeat_type_check',
@@ -31,6 +33,10 @@ import { User } from '../users/user.entity';
 @Check(
   'tasks_assignee_needs_group',
   'assignee_id is null or group_id is not null',
+)
+@Check(
+  'tasks_project_needs_personal_task',
+  'project_id is null or group_id is null',
 )
 export class Task {
   // Minted on the device that created the task; never changes.
@@ -76,6 +82,17 @@ export class Task {
     foreignKeyConstraintName: 'tasks_group_id_fkey',
   })
   group: Group | null;
+
+  // A personal project contains personal tasks only. Removing a project leaves its tasks alive.
+  @Column({ name: 'project_id', type: 'uuid', nullable: true })
+  projectId: string | null;
+
+  @ManyToOne(() => Project, { onDelete: 'SET NULL' })
+  @JoinColumn({
+    name: 'project_id',
+    foreignKeyConstraintName: 'tasks_project_id_fkey',
+  })
+  project: Project | null;
 
   // Who the task is for; null means for everyone. Only inside a group, and only a member (a
   // trigger empties it otherwise). `user_id` above is the author in a group task.

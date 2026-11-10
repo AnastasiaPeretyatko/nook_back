@@ -123,6 +123,10 @@ describe('DELETE /me (B8.5)', () => {
     await sockets.closeAll();
     await ds.query(`drop trigger if exists test_break_delete on cycle_days`);
     await ds.query(`drop function if exists test_break_delete()`);
+    await ds.query(
+      `drop trigger if exists test_break_project_delete on projects`,
+    );
+    await ds.query(`drop function if exists test_break_project_delete()`);
   });
 
   afterAll(() => app.close());
@@ -553,6 +557,112 @@ describe('DELETE /me (B8.5)', () => {
       expect(
         await count(`select 1 from users where deleted_at is not null`),
       ).toBe(1);
+    });
+  });
+
+  describe('project cleanup', () => {
+    const createProject = async (
+      owner: Session,
+      name: string,
+      archived = false,
+    ) => {
+      const [project] = await ds.query<{ id: string }[]>(
+        `insert into projects (user_id, name, archived_at)
+         values ($1, $2, case when $3 then now() else null end) returning id`,
+        [owner.id, name, archived],
+      );
+      return project.id;
+    };
+
+    it('removes every personal project, its task links, and no other user’s projects', async () => {
+      const active = await createProject(bob, 'Active with a task');
+      const empty = await createProject(bob, 'Empty');
+      const archived = await createProject(bob, 'Archived', true);
+      const annProject = await createProject(ann, 'Ann keeps this');
+      await ds.query(`update tasks set project_id = $1 where id = $2`, [
+        active,
+        T_BOB_PERSONAL,
+      ]);
+      expect(
+        await count(
+          `select 1 from projects where id = any($1::uuid[]) and user_id = $2`,
+          [active, empty, archived],
+          bob.id,
+        ),
+      ).toBe(3);
+
+      await del(bob).expect(204);
+
+      expect(
+        await count(`select 1 from projects where user_id = $1`, bob.id),
+      ).toBe(0);
+      expect(
+        await count(
+          `select 1 from projects where id = $1 and user_id = $2`,
+          annProject,
+          ann.id,
+        ),
+      ).toBe(1);
+      expect(
+        await count(`select 1 from tasks where id = $1`, T_BOB_PERSONAL),
+      ).toBe(0);
+      expect(
+        await count(
+          `select 1 from tasks t left join projects p on p.id = t.project_id
+           where t.project_id is not null and p.id is null`,
+        ),
+      ).toBe(0);
+    });
+
+    it('still deletes an account that has no projects', async () => {
+      await del(dan).expect(204);
+      expect(
+        await one(
+          `select deleted_at is not null as gone from users where id = $1`,
+          dan.id,
+        ),
+      ).toEqual({ gone: true });
+      expect(
+        await count(`select 1 from projects where user_id = $1`, dan.id),
+      ).toBe(0);
+    });
+
+    it('keeps repeated deletion idempotent after project cleanup', async () => {
+      await createProject(bob, 'Only project');
+      await del(bob).expect(204);
+      await del(bob, null).expect(204);
+      await del(bob, { password: 'wrong' }).expect(204);
+      expect(
+        await count(`select 1 from projects where user_id = $1`, bob.id),
+      ).toBe(0);
+    });
+
+    it('rolls personal task and project cleanup back together when project deletion fails', async () => {
+      const project = await createProject(bob, 'Cannot delete');
+      await ds.query(`update tasks set project_id = $1 where id = $2`, [
+        project,
+        T_BOB_PERSONAL,
+      ]);
+      await ds.query(`
+        create function test_break_project_delete() returns trigger language plpgsql as $$
+        begin raise exception 'project deletion is broken on purpose'; end; $$`);
+      await ds.query(`create trigger test_break_project_delete before delete on projects
+        for each row execute function test_break_project_delete()`);
+
+      await del(bob).expect(500);
+
+      expect(
+        await count(`select 1 from tasks where id = $1`, T_BOB_PERSONAL),
+      ).toBe(1);
+      expect(await count(`select 1 from projects where id = $1`, project)).toBe(
+        1,
+      );
+      expect(
+        await one(
+          `select deleted_at is null as active from users where id = $1`,
+          bob.id,
+        ),
+      ).toEqual({ active: true });
     });
   });
 

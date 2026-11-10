@@ -46,7 +46,7 @@ const TASK_COLUMNS = `
   scheduled_time_minutes, end_time_minutes, ${day('start_date')} as start_date,
   ${iso('created_at')} as created_at, ${iso('client_updated_at')} as client_updated_at,
   ${iso('updated_at')} as updated_at, ${iso('deleted_at')} as deleted_at,
-  group_id, assignee_id`;
+  group_id, assignee_id, project_id`;
 
 const LOG_COLUMNS = `
   task_id, user_id, ${day('date')} as date, completed, value,

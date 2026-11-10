@@ -7,6 +7,8 @@ export type RejectReason =
   | 'unknown_task'
   | 'unknown_label'
   | 'unknown_group'
+  | 'unknown_project'
+  | 'archived_project'
   | 'not_allowed'
   | 'unsupported_table';
 

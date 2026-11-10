@@ -29,6 +29,9 @@ export interface TaskRow {
   // group counts and a different `group_id` here is ignored (see planTaskWrites).
   groupId: string | null;
   assigneeId: string | null;
+  // Omission preserves the current association; a literal null removes it.
+  projectId: string | null;
+  projectIdSpecified: boolean;
 }
 
 // No user_id: it comes from the token, whatever the client sends.
@@ -271,6 +274,8 @@ export function parseTask(raw: unknown): RowResult<TaskRow> {
       clientUpdatedAt: def(f, 'client_updated_at', instant, now),
       groupId: opt(f, 'group_id', uuid),
       assigneeId: opt(f, 'assignee_id', uuid),
+      projectId: opt(f, 'project_id', uuid),
+      projectIdSpecified: Object.hasOwn(f, 'project_id'),
     };
     // A group task is a one-off task without subtasks, not in the "value" mode: the database
     // refuses anything else (tasks_group_task_shape), and its error would roll the push back.
@@ -282,6 +287,7 @@ export function parseTask(raw: unknown): RowResult<TaskRow> {
     ) {
       fail();
     }
+    if (row.groupId && row.projectId !== null) fail();
     return row;
   });
 }

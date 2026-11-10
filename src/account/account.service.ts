@@ -99,6 +99,7 @@ export class AccountService {
     // Marks on these tasks and the links between notes and their moods and tags go with them.
     for (const sql of [
       `delete from tasks where user_id = $1 and group_id is null`,
+      `delete from projects where user_id = $1`,
       `delete from diary_entries where user_id = $1`,
       `delete from note_moods where user_id = $1`,
       `delete from note_tags where user_id = $1`,

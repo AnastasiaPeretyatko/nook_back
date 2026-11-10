@@ -148,6 +148,7 @@ describe('GET /sync/pull', () => {
         deleted_at: null,
         group_id: null,
         assignee_id: null,
+        project_id: null,
       });
       expect(updated_at).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/);
     });

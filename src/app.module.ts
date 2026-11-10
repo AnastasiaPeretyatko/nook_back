@@ -15,6 +15,7 @@ import { DiaryModule } from './diary/diary.module';
 import { GroupsModule } from './groups/groups.module';
 import { HealthModule } from './health/health.module';
 import { PushModule } from './push/push.module';
+import { ProjectsModule } from './projects/projects.module';
 import { RealtimeGatewayModule } from './realtime/realtime-gateway.module';
 import { SyncModule } from './sync/sync.module';
 import { TasksModule } from './tasks/tasks.module';
@@ -45,6 +46,7 @@ import { UsersModule } from './users/users.module';
     CycleModule,
     DevicesModule,
     PushModule,
+    ProjectsModule,
     GroupsModule,
     RealtimeGatewayModule,
     SyncModule,

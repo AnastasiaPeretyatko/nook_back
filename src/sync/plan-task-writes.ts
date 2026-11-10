@@ -7,6 +7,7 @@ export interface KnownTask {
   userId: string;
   parentId: string | null;
   groupId: string | null;
+  projectId: string | null;
   deleted: boolean;
 }
 
@@ -72,7 +73,15 @@ export function planTaskWrites(
         row.trackingMode === 'value'
       )
         reject(row.id, 'invalid_row');
-      else live.set(row.id, { ...row, groupId: old.groupId });
+      else if (row.projectIdSpecified && row.projectId !== null)
+        reject(row.id, 'invalid_row');
+      else
+        live.set(row.id, {
+          ...row,
+          groupId: old.groupId,
+          projectId: null,
+          projectIdSpecified: false,
+        });
     } else if (old.userId !== userId) {
       reject(row.id, 'id_taken');
     }
@@ -80,7 +89,12 @@ export function planTaskWrites(
     // is nothing to write, since the row stays empty.
     else if (!old.deleted) {
       // A personal task stays personal.
-      live.set(row.id, { ...row, groupId: null, assigneeId: null });
+      live.set(row.id, {
+        ...row,
+        groupId: null,
+        assigneeId: null,
+        projectId: row.projectIdSpecified ? row.projectId : old.projectId,
+      });
     }
   }
 

@@ -78,6 +78,8 @@ describe('parseTask', () => {
       clientUpdatedAt: '2026-01-15T10:00:01Z',
       groupId: null,
       assigneeId: null,
+      projectId: null,
+      projectIdSpecified: false,
     });
   });
 

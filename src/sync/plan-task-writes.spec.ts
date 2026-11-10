@@ -27,6 +27,7 @@ const stored = (
   userId: ME,
   parentId,
   groupId: null,
+  projectId: null,
   deleted: false,
   ...extra,
 });
