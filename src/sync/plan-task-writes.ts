@@ -8,6 +8,7 @@ export interface KnownTask {
   parentId: string | null;
   groupId: string | null;
   projectId: string | null;
+  sectionId: string | null;
   deleted: boolean;
 }
 
@@ -73,7 +74,10 @@ export function planTaskWrites(
         row.trackingMode === 'value'
       )
         reject(row.id, 'invalid_row');
-      else if (row.projectIdSpecified && row.projectId !== null)
+      else if (
+        (row.projectIdSpecified && row.projectId !== null) ||
+        (row.sectionIdSpecified && row.sectionId !== null)
+      )
         reject(row.id, 'invalid_row');
       else
         live.set(row.id, {
@@ -81,6 +85,8 @@ export function planTaskWrites(
           groupId: old.groupId,
           projectId: null,
           projectIdSpecified: false,
+          sectionId: null,
+          sectionIdSpecified: false,
         });
     } else if (old.userId !== userId) {
       reject(row.id, 'id_taken');
@@ -89,11 +95,19 @@ export function planTaskWrites(
     // is nothing to write, since the row stays empty.
     else if (!old.deleted) {
       // A personal task stays personal.
+      const projectId = row.projectIdSpecified ? row.projectId : old.projectId;
       live.set(row.id, {
         ...row,
         groupId: null,
         assigneeId: null,
-        projectId: row.projectIdSpecified ? row.projectId : old.projectId,
+        projectId,
+        // Removing a project is the one project change that has an unambiguous safe section
+        // action: its project section becomes a regular-task mismatch, so clear it.
+        sectionId: row.sectionIdSpecified
+          ? row.sectionId
+          : row.projectIdSpecified && projectId === null
+            ? null
+            : old.sectionId,
       });
     }
   }

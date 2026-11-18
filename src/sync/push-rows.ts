@@ -32,6 +32,24 @@ export interface TaskRow {
   // Omission preserves the current association; a literal null removes it.
   projectId: string | null;
   projectIdSpecified: boolean;
+  // Omission preserves the current association; a literal null removes it.
+  sectionId: string | null;
+  sectionIdSpecified: boolean;
+  // An association-only update must not reset scheduling, assignment, or task content to parser
+  // defaults merely because a device sent the compact patch form.
+  associationOnly: boolean;
+}
+
+// A section is a normal synced row: it is created on the device and carries the device clock.
+// Its scope is fixed after creation, so an old client omitting project_id cannot move it.
+export interface SectionRow {
+  id: string;
+  projectId: string | null;
+  projectIdSpecified: boolean;
+  name: string;
+  position: number;
+  createdAt: string;
+  clientUpdatedAt: string;
 }
 
 // No user_id: it comes from the token, whatever the client sends.
@@ -58,6 +76,11 @@ export interface CycleDayRow {
   pill: boolean;
   note: string | null;
   clientUpdatedAt: string;
+}
+
+// Confirmed starts have no mutable payload: their date (with the token's user id) is the key.
+export interface CycleConfirmedStartRow {
+  date: string;
 }
 
 export interface DeletedRow {
@@ -276,7 +299,32 @@ export function parseTask(raw: unknown): RowResult<TaskRow> {
       assigneeId: opt(f, 'assignee_id', uuid),
       projectId: opt(f, 'project_id', uuid),
       projectIdSpecified: Object.hasOwn(f, 'project_id'),
+      sectionId: opt(f, 'section_id', uuid),
+      sectionIdSpecified: Object.hasOwn(f, 'section_id'),
+      associationOnly: false,
     };
+    const taskFields = [
+      'parent_id',
+      'title',
+      'description',
+      'status',
+      'repeat_type',
+      'repeat_interval',
+      'repeat_days_mask',
+      'tracking_mode',
+      'target_duration_minutes',
+      'target_value',
+      'icon_key',
+      'color_key',
+      'scheduled_time_minutes',
+      'end_time_minutes',
+      'start_date',
+      'group_id',
+      'assignee_id',
+    ];
+    row.associationOnly =
+      (row.projectIdSpecified || row.sectionIdSpecified) &&
+      taskFields.every((field) => !Object.hasOwn(f, field));
     // A group task is a one-off task without subtasks, not in the "value" mode: the database
     // refuses anything else (tasks_group_task_shape), and its error would roll the push back.
     if (
@@ -287,8 +335,26 @@ export function parseTask(raw: unknown): RowResult<TaskRow> {
     ) {
       fail();
     }
-    if (row.groupId && row.projectId !== null) fail();
+    if (row.groupId && (row.projectId !== null || row.sectionId !== null))
+      fail();
     return row;
+  });
+}
+
+export function parseSection(raw: unknown): RowResult<SectionRow> {
+  return parse(raw, 'id', (f) => {
+    const now = new Date().toISOString();
+    const name = req(f, 'name', text(100));
+    if (name.length === 0) fail();
+    return {
+      id: req(f, 'id', uuid),
+      projectId: opt(f, 'project_id', uuid),
+      projectIdSpecified: Object.hasOwn(f, 'project_id'),
+      name,
+      position: def(f, 'position', int(-INT4_MAX - 1, INT4_MAX), 0),
+      createdAt: def(f, 'created_at', instant, now),
+      clientUpdatedAt: def(f, 'client_updated_at', instant, now),
+    };
   });
 }
 
@@ -400,11 +466,31 @@ export function parseCycleDay(raw: unknown): RowResult<CycleDayRow> {
   );
 }
 
+export function parseCycleConfirmedStart(
+  raw: unknown,
+): RowResult<CycleConfirmedStartRow> {
+  return parse(raw, 'date', (f) => ({ date: req(f, 'date', day) }), dayIdOf);
+}
+
 // The table name is only checked to be a short string; which tables are supported is decided
 // later, so an unknown table is reported as such and not as a broken row.
 export function parseDeleted(raw: unknown): RowResult<DeletedRow> {
-  return parse(raw, 'id', (f) => ({
-    table: req(f, 'table', text(64)),
-    id: req(f, 'id', uuid),
-  }));
+  return parse(
+    raw,
+    'id',
+    (f) => {
+      const table = req(f, 'table', text(64));
+      return {
+        table,
+        id:
+          table === 'cycle_confirmed_starts'
+            ? req(f, 'id', day)
+            : req(f, 'id', uuid),
+      };
+    },
+    (raw, key) =>
+      isObject(raw) && raw.table === 'cycle_confirmed_starts'
+        ? dayIdOf(raw, key)
+        : idOf(raw, key),
+  );
 }

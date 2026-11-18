@@ -20,6 +20,11 @@ export class SyncPushDto {
   @IsOptional()
   @ArrayMaxSize(MAX_ROWS_PER_PUSH, tooMany)
   @IsArray()
+  sections?: unknown[];
+
+  @IsOptional()
+  @ArrayMaxSize(MAX_ROWS_PER_PUSH, tooMany)
+  @IsArray()
   logs?: unknown[];
 
   @IsOptional()
@@ -46,4 +51,9 @@ export class SyncPushDto {
   @ArrayMaxSize(MAX_ROWS_PER_PUSH, tooMany)
   @IsArray()
   cycle_days?: unknown[];
+
+  @IsOptional()
+  @ArrayMaxSize(MAX_ROWS_PER_PUSH, tooMany)
+  @IsArray()
+  cycle_confirmed_starts?: unknown[];
 }

@@ -6,7 +6,15 @@ import { Rejection } from './rejection';
 // The tables whose rows can be deleted. Only these names are ever put into the SQL (they come
 // from this list, never from the request). A tombstone of a tag or a mood needs no name: the
 // `blank_deleted_*` triggers fill the empty ones in before the not-null check.
-const TABLES = ['tasks', 'diary_entries', 'note_tags', 'note_moods'];
+const UUID_TABLES = [
+  'tasks',
+  'diary_entries',
+  'note_tags',
+  'note_moods',
+  'sections',
+];
+const DATE_TABLE = 'cycle_confirmed_starts';
+const TABLES = [...UUID_TABLES, DATE_TABLE];
 
 // One statement for every table that has ids to delete. For each, the insert covers both cases:
 // an id the server has not seen becomes a tombstone (so a row that arrives later from another
@@ -34,26 +42,51 @@ const TASK_MAY_DELETE = `(
 )`;
 
 function deleteSql(tables: string[]): string {
-  const marked = tables.map(
-    (table, i) => `m${i} as (
+  const marked = tables.map((table, i) => {
+    const param = `$${i + 2}`;
+    if (table === DATE_TABLE) {
+      return `m${i} as (
+          insert into cycle_confirmed_starts (user_id, date, deleted_at)
+          select $1::uuid, requested.date, now()
+          from unnest(${param}::date[]) as requested(date)
+          where exists (
+            select 1 from cycle_confirmed_starts mine
+            where mine.user_id = $1::uuid and mine.date = requested.date
+          ) or not exists (
+            select 1 from cycle_confirmed_starts other
+            where other.user_id is distinct from $1::uuid and other.date = requested.date
+          )
+          on conflict (user_id, date) do update set deleted_at = excluded.deleted_at
+          where cycle_confirmed_starts.deleted_at is null
+        )`;
+    }
+    return `m${i} as (
       insert into ${table} (id, user_id, deleted_at)
-      select id, $1::uuid, now() from unnest($${i + 2}::uuid[]) as id
+      select id, $1::uuid, now() from unnest(${param}::uuid[]) as id
       on conflict (id) do update set deleted_at = excluded.deleted_at
       where ${
         table === 'tasks'
           ? TASK_MAY_DELETE
           : `${table}.user_id = excluded.user_id`
       } and ${table}.deleted_at is null
-    )`,
-  );
+    )`;
+  });
   const foreign = tables.map((table, i) =>
-    table === 'tasks'
-      ? `select 'tasks' as tbl, id,
+    table === DATE_TABLE
+      ? `select '${DATE_TABLE}' as tbl, date::text as id, 'id_taken' as reason
+        from ${DATE_TABLE}
+        where date = any($${i + 2}::date[]) and user_id is distinct from $1::uuid
+          and not exists (
+            select 1 from ${DATE_TABLE} mine
+            where mine.user_id = $1::uuid and mine.date = ${DATE_TABLE}.date
+          )`
+      : table === 'tasks'
+        ? `select 'tasks' as tbl, id,
           case when group_id is not null and is_group_member(group_id, $1::uuid)
                then 'not_allowed' else 'id_taken' end as reason
         from tasks
         where id = any($${i + 2}::uuid[]) and not ${TASK_MAY_DELETE}`
-      : `select '${table}' as tbl, id, 'id_taken' as reason from ${table}
+        : `select '${table}' as tbl, id, 'id_taken' as reason from ${table}
         where id = any($${i + 2}::uuid[]) and user_id is distinct from $1::uuid`,
   );
   return `with ${marked.join(',\n')}\n${foreign.join('\nunion all\n')}`;
@@ -62,7 +95,8 @@ function deleteSql(tables: string[]): string {
 @Injectable()
 export class DeletionWriter {
   // Runs inside the push transaction, after everything that is written. Tasks (personal and of a
-  // group) and the diary (notes, tags, moods) can be deleted; days of the cycle cannot.
+  // group), the diary (notes, tags, moods), and confirmed cycle starts can be deleted; days of the
+  // cycle cannot.
   async write(
     manager: EntityManager,
     userId: string,

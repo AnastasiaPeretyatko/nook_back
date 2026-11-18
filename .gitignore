@@ -63,6 +63,7 @@ docs/
 CLAUDE.md
 .agents
 skills-lock.json
+graphify-out/
 
 # Database copies (scripts/backup.sh writes them outside the project; this is a second lock)
 *.dump

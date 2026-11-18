@@ -9,6 +9,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { Task } from '../tasks/task.entity';
+import { Section } from '../sections/section.entity';
 import { User } from '../users/user.entity';
 
 // The schema itself lives in the migration (checks and trigger included); this class only maps it.
@@ -56,4 +57,7 @@ export class Project {
 
   @OneToMany(() => Task, (task) => task.project)
   tasks: Task[];
+
+  @OneToMany(() => Section, (section) => section.project)
+  sections: Section[];
 }

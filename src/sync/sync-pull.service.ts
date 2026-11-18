@@ -21,6 +21,8 @@ export interface PullResult {
   has_more: boolean;
   tasks: Rows;
   logs: Rows;
+  // Always with tasks: sections define the scopes named by task.section_id.
+  sections: Rows;
   // Always. Not paged and not part of `next` / `has_more`.
   groups: GroupsSnapshot;
   // Only with `include=diary`.
@@ -29,6 +31,7 @@ export interface PullResult {
   entries?: Rows;
   // Only with `include=cycle`.
   cycle_days?: Rows;
+  cycle_confirmed_starts?: Rows;
 }
 
 // Moments leave as text with all six digits of microseconds (a JS Date would cut them to
@@ -46,12 +49,17 @@ const TASK_COLUMNS = `
   scheduled_time_minutes, end_time_minutes, ${day('start_date')} as start_date,
   ${iso('created_at')} as created_at, ${iso('client_updated_at')} as client_updated_at,
   ${iso('updated_at')} as updated_at, ${iso('deleted_at')} as deleted_at,
-  group_id, assignee_id, project_id`;
+  group_id, assignee_id, project_id, section_id`;
 
 const LOG_COLUMNS = `
   task_id, user_id, ${day('date')} as date, completed, value,
   ${iso('completed_at')} as completed_at, ${iso('client_updated_at')} as client_updated_at,
   ${iso('updated_at')} as updated_at`;
+
+const SECTION_COLUMNS = `
+  id, project_id, name, position, ${iso('created_at')} as created_at,
+  ${iso('client_updated_at')} as client_updated_at, ${iso('updated_at')} as updated_at,
+  ${iso('deleted_at')} as deleted_at`;
 
 // The diary, in the shape of the plan (4.2): no user_id. A note carries its moods and tags
 // inside (sorted, so that the same set always reads the same way): the app used to ask twice
@@ -81,13 +89,25 @@ const CYCLE_COLUMNS = `
   ${day('date')} as date, is_period, flow, mood, symptoms, discharge, sex, pill, note,
   ${iso('client_updated_at')} as client_updated_at, ${iso('updated_at')} as updated_at`;
 
+const CYCLE_CONFIRMED_START_COLUMNS = `
+  ${day('date')} as date, ${iso('updated_at')} as updated_at,
+  ${iso('deleted_at')} as deleted_at`;
+
 // One kind of rows in the answer. `owner` picks the caller's rows; the starter moods have no
 // owner and are everybody's. `alsoOwner` is a second, never overlapping way for a row to be the
 // caller's (the group's rows): it is read as a separate branch, because an `or` in one condition
 // sends the planner to read the whole table instead of following an index. `maxPage` keeps a page of heavy rows (notes) small, whatever the
 // app asks for: has_more makes up for it.
 interface Part {
-  key: 'tasks' | 'logs' | 'moods' | 'tags' | 'entries' | 'cycle_days';
+  key:
+    | 'tasks'
+    | 'logs'
+    | 'sections'
+    | 'moods'
+    | 'tags'
+    | 'entries'
+    | 'cycle_days'
+    | 'cycle_confirmed_starts';
   table: string;
   columns: string;
   owner: string;
@@ -117,6 +137,12 @@ const LOGS_PART: Part = {
           and task_id in (select id from tasks where user_id = $1 and group_id is null)`,
   alsoOwner: `task_id in (select id from tasks where group_id in ${MY_GROUPS})`,
 };
+const SECTIONS_PART: Part = {
+  key: 'sections',
+  table: 'sections',
+  columns: SECTION_COLUMNS,
+  owner: 'user_id = $1',
+};
 const DIARY_PARTS: Part[] = [
   {
     key: 'moods',
@@ -143,6 +169,12 @@ const CYCLE_PART: Part = {
   key: 'cycle_days',
   table: 'cycle_days',
   columns: CYCLE_COLUMNS,
+  owner: 'user_id = $1',
+};
+const CYCLE_CONFIRMED_START_PART: Part = {
+  key: 'cycle_confirmed_starts',
+  table: 'cycle_confirmed_starts',
+  columns: CYCLE_CONFIRMED_START_COLUMNS,
   owner: 'user_id = $1',
 };
 
@@ -207,8 +239,11 @@ export class SyncPullService {
     const parts = [
       TASKS_PART,
       LOGS_PART,
+      SECTIONS_PART,
       ...(include.includes('diary') ? DIARY_PARTS : []),
-      ...(include.includes('cycle') ? [CYCLE_PART] : []),
+      ...(include.includes('cycle')
+        ? [CYCLE_PART, CYCLE_CONFIRMED_START_PART]
+        : []),
     ];
 
     // All reads at once, to spare the wait on a far-away database.
@@ -237,6 +272,7 @@ export class SyncPullService {
       has_more: truncated.length > 0,
       tasks: [],
       logs: [],
+      sections: [],
       groups,
     };
     parts.forEach((part, i) => {

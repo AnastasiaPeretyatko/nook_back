@@ -16,6 +16,7 @@ interface PullResponse {
   tags?: Row[];
   entries?: Row[];
   cycle_days?: Row[];
+  cycle_confirmed_starts?: Row[];
 }
 interface Session {
   token: string;
@@ -104,11 +105,13 @@ describe('GET /sync/pull with the cycle', () => {
       const res = await pull(ann);
       expect(dates(res.cycle_days)).toEqual([dayN(15)]);
       expect(Object.keys(res).sort()).toEqual([
+        'cycle_confirmed_starts',
         'cycle_days',
         'groups',
         'has_more',
         'logs',
         'next',
+        'sections',
         'tasks',
       ]);
     });
@@ -123,6 +126,7 @@ describe('GET /sync/pull with the cycle', () => {
     it('gives an empty list, not a missing key, when there are no days', async () => {
       const res = await pull(bob);
       expect(res.cycle_days).toEqual([]);
+      expect(res.cycle_confirmed_starts).toEqual([]);
     });
   });
 

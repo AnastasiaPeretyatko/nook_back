@@ -115,6 +115,7 @@ describe('GET /sync/pull with the diary', () => {
           'has_more',
           'logs',
           'next',
+          'sections',
           'tasks',
         ]);
         expect(res.tasks).toHaveLength(1);
@@ -126,11 +127,13 @@ describe('GET /sync/pull with the diary', () => {
       async (query) => {
         const res = await pull(ann, query);
         expect(Object.keys(res).sort()).toEqual([
+          'cycle_confirmed_starts',
           'cycle_days',
           'groups',
           'has_more',
           'logs',
           'next',
+          'sections',
           'tasks',
         ]);
         expect(res.tasks).toHaveLength(1);
@@ -148,6 +151,7 @@ describe('GET /sync/pull with the diary', () => {
           'logs',
           'moods',
           'next',
+          'sections',
           'tags',
           'tasks',
         ]);

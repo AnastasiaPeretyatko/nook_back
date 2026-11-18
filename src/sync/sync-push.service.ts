@@ -5,16 +5,19 @@ import { PushService } from '../push/push.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { SyncPushDto } from './dto/sync-push.dto';
 import { CycleWriter } from './cycle-writer';
+import { CycleConfirmedStartWriter } from './cycle-confirmed-start-writer';
 import { DeletionWriter } from './deletion-writer';
 import { EntryWriter } from './entry-writer';
 import { LabelWriter } from './label-writer';
 import { LogWriter } from './log-writer';
 import {
   parseCycleDay,
+  parseCycleConfirmedStart,
   parseDeleted,
   parseEntry,
   parseLog,
   parseMood,
+  parseSection,
   parseTag,
   parseTask,
   RowResult,
@@ -22,6 +25,7 @@ import {
 import { Rejection } from './rejection';
 import { TaskWriter } from './task-writer';
 import { errorText } from '../common/error-text';
+import { SectionWriter } from './section-writer';
 
 export interface PushResult {
   rejected: Rejection[];
@@ -37,9 +41,11 @@ export class SyncPushService {
     private readonly dataSource: DataSource,
     private readonly labels: LabelWriter,
     private readonly entries: EntryWriter,
+    private readonly sections: SectionWriter,
     private readonly tasks: TaskWriter,
     private readonly logs: LogWriter,
     private readonly cycle: CycleWriter,
+    private readonly confirmedStarts: CycleConfirmedStartWriter,
     private readonly deletions: DeletionWriter,
     private readonly realtime: RealtimeService,
     private readonly pushes: PushService,
@@ -74,10 +80,16 @@ export class SyncPushService {
     const moodRows = parseList(dto.moods, 'note_moods', parseMood);
     const tagRows = parseList(dto.tags, 'note_tags', parseTag);
     const entryRows = parseList(dto.entries, 'diary_entries', parseEntry);
+    const sectionRows = parseList(dto.sections, 'sections', parseSection);
     const taskRows = parseList(dto.tasks, 'tasks', parseTask);
     const logRows = parseList(dto.logs, 'task_logs', parseLog);
     // A refused day is reported by the day itself (YYYY-MM-DD): the row has no id.
     const cycleRows = parseList(dto.cycle_days, 'cycle_days', parseCycleDay);
+    const confirmedStartRows = parseList(
+      dto.cycle_confirmed_starts,
+      'cycle_confirmed_starts',
+      parseCycleConfirmedStart,
+    );
     // Without a readable table name there is nothing better to call the table.
     const deletedRows = parseList(dto.deleted, 'deleted', parseDeleted);
 
@@ -86,9 +98,11 @@ export class SyncPushService {
       moodRows,
       tagRows,
       entryRows,
+      sectionRows,
       taskRows,
       logRows,
       cycleRows,
+      confirmedStartRows,
       deletedRows,
     ];
     // What happened to group tasks, as the writers saw it; told to people's phones after the commit.
@@ -99,11 +113,13 @@ export class SyncPushService {
           ...(await this.labels.writeMoods(manager, userId, moodRows)),
           ...(await this.labels.writeTags(manager, userId, tagRows)),
           ...(await this.entries.write(manager, userId, entryRows)),
+          ...(await this.sections.write(manager, userId, sectionRows)),
           ...(await this.tasks.write(manager, userId, taskRows, events)),
           ...(await this.logs.write(manager, userId, logRows, events)),
         );
         // Refuses nothing: the rows were checked above and a day cannot be someone else's.
         await this.cycle.write(manager, userId, cycleRows);
+        await this.confirmedStarts.write(manager, userId, confirmedStartRows);
         rejected.push(
           ...(await this.deletions.write(manager, userId, deletedRows)),
         );
@@ -116,7 +132,11 @@ export class SyncPushService {
       ...moodRows.map((r) => ({ key: `note_moods:${r.id}` })),
       ...tagRows.map((r) => ({ key: `note_tags:${r.id}` })),
       ...entryRows.map((r) => ({ key: `diary_entries:${r.id}` })),
+      ...sectionRows.map((r) => ({ key: `sections:${r.id}` })),
       ...cycleRows.map((r) => ({ key: `cycle_days:${r.date}` })),
+      ...confirmedStartRows.map((r) => ({
+        key: `cycle_confirmed_starts:${r.date}`,
+      })),
       ...taskRows.map((r) => ({ key: `tasks:${r.id}`, taskId: r.id })),
       ...logRows.map((r) => ({
         key: `task_logs:${r.taskId}`,

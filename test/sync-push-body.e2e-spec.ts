@@ -51,6 +51,7 @@ describe('POST /sync/push body', () => {
   it('refuses a list that is not a list', async () => {
     for (const body of [
       { tasks: {} },
+      { sections: {} },
       { logs: 'x' },
       { deleted: 5 },
       { entries: 1 },
@@ -60,7 +61,15 @@ describe('POST /sync/push body', () => {
     }
   });
 
-  it.each(['tasks', 'logs', 'deleted', 'entries', 'cycle_days'])(
+  it.each([
+    'tasks',
+    'sections',
+    'logs',
+    'deleted',
+    'entries',
+    'cycle_days',
+    'cycle_confirmed_starts',
+  ])(
     'takes exactly 500 rows in %s and refuses 501 with batch_too_large',
     async (list) => {
       await push({ [list]: Array.from({ length: 500 }, () => ({})) }).expect(

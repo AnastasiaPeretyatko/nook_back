@@ -98,12 +98,14 @@ export class AccountService {
   private async erasePersonalData(manager: EntityManager, userId: string) {
     // Marks on these tasks and the links between notes and their moods and tags go with them.
     for (const sql of [
+      `delete from sections where user_id = $1`,
       `delete from tasks where user_id = $1 and group_id is null`,
       `delete from projects where user_id = $1`,
       `delete from diary_entries where user_id = $1`,
       `delete from note_moods where user_id = $1`,
       `delete from note_tags where user_id = $1`,
       `delete from cycle_days where user_id = $1`,
+      `delete from cycle_confirmed_starts where user_id = $1`,
       `delete from device_tokens where user_id = $1`,
       `delete from refresh_tokens where user_id = $1`,
       `delete from profiles where user_id = $1`,

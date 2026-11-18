@@ -216,6 +216,7 @@ describe('DELETE /me (B8.5)', () => {
         },
       ],
       cycle_days: [{ date: DAY, note: 'SECRET-BOB-CYCLE', flow: 3 }],
+      cycle_confirmed_starts: [{ date: DAY }],
     });
     await push(cat, {
       tasks: [{ id: T_G2_CAT, group_id: G2, title: 'cat task in bobs group' }],

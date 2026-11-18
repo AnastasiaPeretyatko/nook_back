@@ -16,6 +16,7 @@ export interface PullBody {
   has_more: boolean;
   tasks: Row[];
   logs: Row[];
+  sections: Row[];
   moods?: Row[];
   tags?: Row[];
   entries?: Row[];

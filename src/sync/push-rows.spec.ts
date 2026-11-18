@@ -1,9 +1,11 @@
 import {
+  parseCycleConfirmedStart,
   parseCycleDay,
   parseDeleted,
   parseEntry,
   parseLog,
   parseMood,
+  parseSection,
   parseTag,
   parseTask,
 } from './push-rows';
@@ -80,6 +82,9 @@ describe('parseTask', () => {
       assigneeId: null,
       projectId: null,
       projectIdSpecified: false,
+      sectionId: null,
+      sectionIdSpecified: false,
+      associationOnly: false,
     });
   });
 
@@ -266,6 +271,59 @@ describe('parseTask', () => {
   });
 });
 
+describe('parseSection', () => {
+  const section = (extra: Record<string, unknown> = {}) => ({
+    id: ID,
+    name: 'Inbox',
+    ...extra,
+  });
+
+  it('takes a device-created section with its scope and ordering', () => {
+    expect(
+      rowOf(
+        parseSection(
+          section({
+            project_id: OTHER,
+            position: -2,
+            created_at: '2026-01-15T10:00:00.123456Z',
+            client_updated_at: '2026-01-15T10:01:00Z',
+          }),
+        ),
+      ),
+    ).toEqual({
+      id: ID,
+      projectId: OTHER,
+      projectIdSpecified: true,
+      name: 'Inbox',
+      position: -2,
+      createdAt: '2026-01-15T10:00:00.123456Z',
+      clientUpdatedAt: '2026-01-15T10:01:00Z',
+    });
+  });
+
+  it('defaults a new regular section to position zero and records an omitted project scope', () => {
+    const row = rowOf(parseSection(section()));
+    expect(row).toMatchObject({
+      projectId: null,
+      projectIdSpecified: false,
+      position: 0,
+    });
+    expect(row.createdAt).toMatch(/^\d{4}-.*Z$/);
+  });
+
+  it.each([
+    ['a missing name', { name: undefined }],
+    ['an empty name', { name: '' }],
+    ['a name over 100 characters', { name: 'x'.repeat(101) }],
+    ['a bad project id', { project_id: 'x' }],
+    ['a fractional position', { position: 1.5 }],
+    ['a position beyond int4', { position: 2_147_483_648 }],
+    ['a malformed device timestamp', { client_updated_at: 'now' }],
+  ])('refuses %s, naming its section id', (_name, extra) => {
+    expect(refusedId(parseSection(section(extra)))).toBe(ID);
+  });
+});
+
 describe('parseLog', () => {
   it('takes a mark as the app sends it', () => {
     expect(
@@ -349,6 +407,19 @@ describe('parseDeleted', () => {
       table: 'diary_entries',
       id: ID,
     });
+  });
+
+  it('takes a date key only for confirmed cycle starts', () => {
+    expect(
+      rowOf(
+        parseDeleted({ table: 'cycle_confirmed_starts', id: '2026-01-15' }),
+      ),
+    ).toEqual({ table: 'cycle_confirmed_starts', id: '2026-01-15' });
+    expect(
+      refusedId(
+        parseDeleted({ table: 'cycle_confirmed_starts', id: '2026-02-30' }),
+      ),
+    ).toBeNull();
   });
 
   it('refuses a bad id, a missing or non-text table, or a NUL in it', () => {
@@ -865,5 +936,19 @@ describe('parseCycleDay', () => {
     it.each(bad)('%s', (_name, raw) => {
       expect(refusedId(parseCycleDay(raw))).toBeNull();
     });
+  });
+});
+
+describe('parseCycleConfirmedStart', () => {
+  it('accepts a plain calendar date and ignores client ownership fields', () => {
+    expect(
+      rowOf(parseCycleConfirmedStart({ date: '2026-01-15', user_id: OTHER })),
+    ).toEqual({ date: '2026-01-15' });
+  });
+
+  it('refuses non-calendar dates without echoing an untrusted value', () => {
+    expect(refusedId(parseCycleConfirmedStart({ date: '2026-02-30' }))).toBe(
+      null,
+    );
   });
 });

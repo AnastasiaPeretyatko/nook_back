@@ -17,6 +17,7 @@ import { HealthModule } from './health/health.module';
 import { PushModule } from './push/push.module';
 import { ProjectsModule } from './projects/projects.module';
 import { RealtimeGatewayModule } from './realtime/realtime-gateway.module';
+import { SectionsModule } from './sections/sections.module';
 import { SyncModule } from './sync/sync.module';
 import { TasksModule } from './tasks/tasks.module';
 import { UsersModule } from './users/users.module';
@@ -47,6 +48,7 @@ import { UsersModule } from './users/users.module';
     DevicesModule,
     PushModule,
     ProjectsModule,
+    SectionsModule,
     GroupsModule,
     RealtimeGatewayModule,
     SyncModule,

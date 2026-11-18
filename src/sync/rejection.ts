@@ -9,6 +9,8 @@ export type RejectReason =
   | 'unknown_group'
   | 'unknown_project'
   | 'archived_project'
+  | 'unknown_section'
+  | 'invalid_section'
   | 'not_allowed'
   | 'unsupported_table';
 

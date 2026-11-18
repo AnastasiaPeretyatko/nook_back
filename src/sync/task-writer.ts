@@ -9,14 +9,14 @@ import { Rejection } from './rejection';
 // the cycle check sees the tree as stored. The climb only follows the caller's own tasks.
 const FIND_KNOWN = `
   with recursive up as (
-    select id, user_id, parent_id, group_id, project_id, deleted_at is not null as deleted
+    select id, user_id, parent_id, group_id, project_id, section_id, deleted_at is not null as deleted
     from tasks where id = any($1::uuid[])
     union
-    select t.id, t.user_id, t.parent_id, t.group_id, t.project_id, t.deleted_at is not null
+    select t.id, t.user_id, t.parent_id, t.group_id, t.project_id, t.section_id, t.deleted_at is not null
     from tasks t join up on t.id = up.parent_id
     where up.user_id = $2 and t.user_id = $2
   )
-  select id, user_id, parent_id, group_id, project_id, deleted from up
+  select id, user_id, parent_id, group_id, project_id, section_id, deleted from up
 `;
 
 // What the caller is to each of these groups, for the groups that exist and are not deleted.
@@ -31,6 +31,12 @@ const FIND_GROUPS = `
 const FIND_PROJECTS = `
   select id, archived_at is not null as archived
   from projects where id = any($1::uuid[]) and user_id = $2
+`;
+
+const FIND_SECTIONS = `
+  select id, project_id
+  from sections
+  where id = any($1::uuid[]) and user_id = $2 and deleted_at is null
 `;
 
 // One statement for the whole batch: the rows travel as one JSON value, which keeps the number
@@ -54,7 +60,8 @@ const UPSERT = `
       "targetDurationMinutes" integer, "targetValue" double precision, "iconKey" text,
       "colorKey" text, "scheduledTimeMinutes" integer, "endTimeMinutes" integer,
       "startDate" date, "createdAt" timestamptz, "clientUpdatedAt" timestamptz,
-      "groupId" uuid, "assigneeId" uuid, "projectId" uuid, "projectIdSpecified" boolean
+      "groupId" uuid, "assigneeId" uuid, "projectId" uuid, "projectIdSpecified" boolean,
+      "sectionId" uuid, "sectionIdSpecified" boolean, "associationOnly" boolean
     )
   ),
   before as (
@@ -65,14 +72,14 @@ const UPSERT = `
       id, user_id, parent_id, title, description, status, repeat_type, repeat_interval,
       repeat_days_mask, tracking_mode, target_duration_minutes, target_value, icon_key,
       color_key, scheduled_time_minutes, end_time_minutes, start_date, created_at,
-      client_updated_at, group_id, assignee_id, project_id
+      client_updated_at, group_id, assignee_id, project_id, section_id
     )
     select
       r.id, $2::uuid, r."parentId", r.title, r.description, r.status, r."repeatType",
       r."repeatInterval", r."repeatDaysMask", r."trackingMode", r."targetDurationMinutes",
       r."targetValue", r."iconKey", r."colorKey", r."scheduledTimeMinutes", r."endTimeMinutes",
       r."startDate", r."createdAt", r."clientUpdatedAt", r."groupId", r."assigneeId",
-      r."projectId"
+      r."projectId", r."sectionId"
     from src r
     where (r."groupId" is null or is_group_member(r."groupId", $2::uuid))
       and (r."projectId" is null or r."projectIdSpecified" = false or exists (
@@ -80,16 +87,40 @@ const UPSERT = `
           and p.archived_at is null
       ))
     on conflict (id) do update set
-      parent_id = excluded.parent_id, title = excluded.title,
-      description = excluded.description, status = excluded.status,
-      repeat_type = excluded.repeat_type, repeat_interval = excluded.repeat_interval,
-      repeat_days_mask = excluded.repeat_days_mask, tracking_mode = excluded.tracking_mode,
-      target_duration_minutes = excluded.target_duration_minutes,
-      target_value = excluded.target_value, icon_key = excluded.icon_key,
-      color_key = excluded.color_key, scheduled_time_minutes = excluded.scheduled_time_minutes,
-      end_time_minutes = excluded.end_time_minutes, start_date = excluded.start_date,
-      client_updated_at = excluded.client_updated_at, assignee_id = excluded.assignee_id,
-      project_id = excluded.project_id
+      parent_id = case when (select r."associationOnly" from src r where r.id = excluded.id)
+        then tasks.parent_id else excluded.parent_id end,
+      title = case when (select r."associationOnly" from src r where r.id = excluded.id)
+        then tasks.title else excluded.title end,
+      description = case when (select r."associationOnly" from src r where r.id = excluded.id)
+        then tasks.description else excluded.description end,
+      status = case when (select r."associationOnly" from src r where r.id = excluded.id)
+        then tasks.status else excluded.status end,
+      repeat_type = case when (select r."associationOnly" from src r where r.id = excluded.id)
+        then tasks.repeat_type else excluded.repeat_type end,
+      repeat_interval = case when (select r."associationOnly" from src r where r.id = excluded.id)
+        then tasks.repeat_interval else excluded.repeat_interval end,
+      repeat_days_mask = case when (select r."associationOnly" from src r where r.id = excluded.id)
+        then tasks.repeat_days_mask else excluded.repeat_days_mask end,
+      tracking_mode = case when (select r."associationOnly" from src r where r.id = excluded.id)
+        then tasks.tracking_mode else excluded.tracking_mode end,
+      target_duration_minutes = case when (select r."associationOnly" from src r where r.id = excluded.id)
+        then tasks.target_duration_minutes else excluded.target_duration_minutes end,
+      target_value = case when (select r."associationOnly" from src r where r.id = excluded.id)
+        then tasks.target_value else excluded.target_value end,
+      icon_key = case when (select r."associationOnly" from src r where r.id = excluded.id)
+        then tasks.icon_key else excluded.icon_key end,
+      color_key = case when (select r."associationOnly" from src r where r.id = excluded.id)
+        then tasks.color_key else excluded.color_key end,
+      scheduled_time_minutes = case when (select r."associationOnly" from src r where r.id = excluded.id)
+        then tasks.scheduled_time_minutes else excluded.scheduled_time_minutes end,
+      end_time_minutes = case when (select r."associationOnly" from src r where r.id = excluded.id)
+        then tasks.end_time_minutes else excluded.end_time_minutes end,
+      start_date = case when (select r."associationOnly" from src r where r.id = excluded.id)
+        then tasks.start_date else excluded.start_date end,
+      client_updated_at = excluded.client_updated_at,
+      assignee_id = case when (select r."associationOnly" from src r where r.id = excluded.id)
+        then tasks.assignee_id else excluded.assignee_id end,
+      project_id = excluded.project_id, section_id = excluded.section_id
     where (tasks.group_id is null and tasks.user_id = $2::uuid)
       or (tasks.group_id is not null
           and is_group_member(tasks.group_id, $2::uuid)
@@ -125,6 +156,7 @@ interface KnownTaskRow {
   parent_id: string | null;
   group_id: string | null;
   project_id: string | null;
+  section_id: string | null;
   deleted: boolean;
 }
 
@@ -154,6 +186,7 @@ export class TaskWriter {
       parentId: k.parent_id,
       groupId: k.group_id,
       projectId: k.project_id,
+      sectionId: k.section_id,
       deleted: k.deleted,
     }));
 
@@ -201,9 +234,42 @@ export class TaskWriter {
       }
       return true;
     });
-    if (accepted.length > 0) {
+    const sectionIds = new Set(
+      accepted
+        .map((row) => row.sectionId)
+        .filter((id): id is string => id !== null),
+    );
+    const sections: { id: string; project_id: string | null }[] =
+      sectionIds.size > 0
+        ? await manager.query(FIND_SECTIONS, [[...sectionIds], userId])
+        : [];
+    const sectionAccess = new Map(
+      sections.map((section) => [section.id, section]),
+    );
+    const sectionAccepted = accepted.filter((row) => {
+      if (row.sectionId === null) return true;
+      const section = sectionAccess.get(row.sectionId);
+      if (!section) {
+        rejected.push({
+          table: 'tasks',
+          id: row.id,
+          reason: 'unknown_section',
+        });
+        return false;
+      }
+      if (section.project_id !== row.projectId) {
+        rejected.push({
+          table: 'tasks',
+          id: row.id,
+          reason: 'invalid_section',
+        });
+        return false;
+      }
+      return true;
+    });
+    if (sectionAccepted.length > 0) {
       const written: WrittenGroupTask[] = await manager.query(UPSERT, [
-        JSON.stringify(accepted),
+        JSON.stringify(sectionAccepted),
         userId,
       ]);
       for (const t of written) {

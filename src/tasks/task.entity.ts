@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 import { Group } from '../groups/group.entity';
 import { Project } from '../projects/project.entity';
+import { Section } from '../sections/section.entity';
 import { User } from '../users/user.entity';
 
 // The schema itself lives in the migration (checks, triggers, deferred key included); this class only maps it.
@@ -17,6 +18,7 @@ import { User } from '../users/user.entity';
 @Index('tasks_parent_id_idx', ['parentId'])
 @Index('tasks_group_updated_idx', ['groupId', 'updatedAt'])
 @Index('tasks_project_id_idx', ['projectId'])
+@Index('tasks_section_id_idx', ['sectionId'])
 @Check('tasks_status_check', "status in ('active', 'paused', 'archived')")
 @Check(
   'tasks_repeat_type_check',
@@ -93,6 +95,19 @@ export class Task {
     foreignKeyConstraintName: 'tasks_project_id_fkey',
   })
   project: Project | null;
+
+  // A personal task may be in one regular section or a section of its project.
+  @Column({ name: 'section_id', type: 'uuid', nullable: true })
+  sectionId: string | null;
+
+  @ManyToOne(() => Section, (section) => section.tasks, {
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({
+    name: 'section_id',
+    foreignKeyConstraintName: 'tasks_section_id_fkey',
+  })
+  section: Section | null;
 
   // Who the task is for; null means for everyone. Only inside a group, and only a member (a
   // trigger empties it otherwise). `user_id` above is the author in a group task.

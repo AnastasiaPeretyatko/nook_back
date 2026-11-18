@@ -13,6 +13,7 @@ interface PullResponse {
   has_more: boolean;
   tasks: Row[];
   logs: Row[];
+  sections: Row[];
 }
 
 describe('GET /sync/pull', () => {
@@ -82,23 +83,25 @@ describe('GET /sync/pull', () => {
       has_more: false,
       tasks: [],
       logs: [],
+      sections: [],
       groups: { groups: [], members: [] },
     });
   });
 
-  it('answers only with tasks and marks unless the diary or the cycle is asked for', async () => {
+  it('answers with tasks, marks, and sections unless the diary or the cycle is asked for', async () => {
     const res = await pull(ann, '?include=tasks');
     expect(Object.keys(res).sort()).toEqual([
       'groups',
       'has_more',
       'logs',
       'next',
+      'sections',
       'tasks',
     ]);
   });
 
   describe('the shape of a row', () => {
-    it('gives a task with the keys of taskToRow plus user_id, updated_at, deleted_at', async () => {
+    it('gives a task with the keys of taskToRow plus user_id, updated_at, deleted_at, and section_id', async () => {
       await push(ann, {
         tasks: [
           {
@@ -149,6 +152,7 @@ describe('GET /sync/pull', () => {
         group_id: null,
         assignee_id: null,
         project_id: null,
+        section_id: null,
       });
       expect(updated_at).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/);
     });
@@ -244,6 +248,7 @@ describe('GET /sync/pull', () => {
         has_more: false,
         tasks: [],
         logs: [],
+        sections: [],
         groups: { groups: [], members: [] },
       });
     });
@@ -293,6 +298,7 @@ describe('GET /sync/pull', () => {
         has_more: false,
         tasks: [],
         logs: [],
+        sections: [],
         groups: { groups: [], members: [] },
       });
     });
